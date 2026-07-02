@@ -1,11 +1,7 @@
 /* ========================================
-   server.js — EdgeOne 部署服务器
-   - 静态文件服务（原）
-   - AI API 代理（原）
-   - 邮箱 OTP 认证（新增）
-   - user_data CRUD API（新增）
-   - JWT 鉴权中间件（新增）
-   - Turso 数据库初始化（新增）
+   server.js — 本地开发服务器
+   ⚠️ 仅用于本地测试。生产环境部署到 EdgeOne 后，
+   API 请求由 cloud-functions/api/[[catchall]].js 处理
    ======================================== */
 import http from 'http';
 import fs from 'fs';
