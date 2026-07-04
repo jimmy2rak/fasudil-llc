@@ -1,72 +1,48 @@
 /* ========================================
    experiment-cards-data.js
-   实验数据管理 — EdgeOne API 版
-   localStorage 持久化 → Turso API 持久化
+   实验数据管理 — 无预设样本，纯用户创建
+   localStorage 持久化，实验级数据隔离
    ======================================== */
 
 const ExperimentData = (() => {
-  const DATA_TYPE = 'app_state';
-  const DATA_KEY = 'experiment_data';
+  const STORAGE_KEY = 'FasudilLLC_Experiments';
 
-  // 内存缓存
+  // 所有用户实验组
   let _userExperiments = [];
+
+  // 表格编辑数据：{ experimentId: { sampleId: {timePoints:[], absorbance:[], sampleVols:[], totalVols:[]} } }
   let _dataOverrides = {};
+
+  // 报告存储：{ experimentId: { sampleId: [{title, timestamp, result}] } }
   let _savedReports = {};
 
-  // 是否已从服务器加载
-  let _loaded = false;
-
-  // ========== API 持久化 ==========
-
-  /** 从服务器加载数据 */
-  async function _loadFromServer() {
+  // ========== localStorage 持久化 ==========
+  function _loadFromStorage() {
     try {
-      const res = await fetch(`/api/data/${DATA_TYPE}/${DATA_KEY}`);
-      if (res.ok) {
-        const result = await res.json();
-        if (result.data) {
-          _userExperiments = result.data.experiments || [];
-          _dataOverrides = result.data.overrides || {};
-          _savedReports = result.data.reports || {};
-          _loaded = true;
-          return;
-        }
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const data = JSON.parse(raw);
+        _userExperiments = data.experiments || [];
+        _dataOverrides = data.overrides || {};
+        _savedReports = data.reports || {};
       }
-    } catch (e) {
-      console.warn('[ExperimentData] 从服务器加载失败，使用空数据:', e.message);
-    }
-    // 默认空数据
-    _userExperiments = [];
-    _dataOverrides = {};
-    _savedReports = {};
-    _loaded = true;
+    } catch (e) { /* 忽略损坏的数据 */ }
   }
 
-  /** 保存到服务器 */
-  async function _saveToServer() {
+  function _saveToStorage() {
     try {
-      await fetch(`/api/data/${DATA_TYPE}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          key: DATA_KEY,
-          value: {
-            experiments: _userExperiments,
-            overrides: _dataOverrides,
-            reports: _savedReports
-          }
-        })
-      });
-    } catch (e) {
-      console.warn('[ExperimentData] 保存到服务器失败:', e.message);
-    }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        experiments: _userExperiments,
+        overrides: _dataOverrides,
+        reports: _savedReports
+      }));
+    } catch (e) { /* 配额满时忽略 */ }
   }
 
-  // 启动时从服务器加载
-  const _initPromise = _loadFromServer();
+  // 启动时加载
+  _loadFromStorage();
 
   // ========== 实验组 CRUD ==========
-
   function getAllExperiments() {
     return _userExperiments;
   }
@@ -79,16 +55,35 @@ const ExperimentData = (() => {
     const id = 'exp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
     const samples = [];
     const formulations = data.formulations || [];
+    const rows = data.rows || []; // 新增：每行独立数据数组
 
-    for (const f of formulations) {
+    for (let fi = 0; fi < formulations.length; fi++) {
+      const f = formulations[fi];
+      const rowData = rows[fi] || {};
+
+      // 每行的独立药量（优先使用行级数据，兼容旧全局数据）
+      const rowDrugAmount = rowData.drugAmount !== undefined
+        ? parseFloat(rowData.drugAmount) || 0
+        : (parseFloat(data.totalDrug) || 0) * (f.samples || []).length;
+
+      const rowDrugConc = rowData.drugConc !== undefined
+        ? parseFloat(rowData.drugConc) || 0
+        : (parseFloat(data.drugConc) || 0);
+
+      const rowConcMode = rowData.drugConcMode || data.drugConcMode || 'manual';
+
+      // 将该行的药量均分到对应样品
+      const sampleCount = (f.samples || []).length;
+      const perSampleDrug = sampleCount > 0 ? rowDrugAmount / sampleCount : 0;
+
       for (const sid of (f.samples || [])) {
-        samples.push({
+        const sample = {
           id: sid,
           experimentId: id,
           formulation: f.name,
           formulationComponents: f.components,
           formulationTotal: f.total,
-          totalDrug: parseFloat(data.totalDrug) || 0,
+          totalDrug: perSampleDrug,
           group: data.groupName || data.experimentName || '',
           timePoints: [],
           absorbance: [],
@@ -102,8 +97,16 @@ const ExperimentData = (() => {
           residualAmount: 0,
           residualRate: 0,
           totalRecovery: 0
-        });
+        };
+        samples.push(sample);
       }
+
+      // 将行级数据存储到 formulation 对象
+      f.perRowDrugAmount = rowDrugAmount;
+      f.perRowDrugConc = rowDrugConc;
+      f.perRowDrugConcMode = rowConcMode;
+      if (rowData.drugConcFormula) f.perRowDrugConcFormula = rowData.drugConcFormula;
+      if (rowData._values) f._rowData = rowData._values;
     }
 
     const group = {
@@ -112,13 +115,14 @@ const ExperimentData = (() => {
       date: data.date || '',
       drugAmount: data.drugAmount || 0,
       drugConc: data.drugConc || 0,
+      templateId: data.templateId || '',
       formulations,
       samples,
       createdAt: Date.now()
     };
 
     _userExperiments.unshift(group);
-    _saveToServer();
+    _saveToStorage();
     return group;
   }
 
@@ -126,12 +130,24 @@ const ExperimentData = (() => {
     const group = _userExperiments.find(e => e.id === experimentId);
     if (!group) return null;
 
+    // 保留旧的表格编辑数据
     const oldOverrides = _dataOverrides[experimentId] || {};
     _dataOverrides[experimentId] = {};
 
     group.samples = [];
     const formulations = data.formulations || [];
-    for (const f of formulations) {
+    const rows = data.rows || [];
+
+    for (let fi = 0; fi < formulations.length; fi++) {
+      const f = formulations[fi];
+      const rowData = rows[fi] || {};
+
+      const rowDrugAmount = rowData.drugAmount !== undefined
+        ? parseFloat(rowData.drugAmount) || 0
+        : (parseFloat(data.totalDrug) || 0) * (f.samples || []).length;
+      const sampleCount = (f.samples || []).length;
+      const perSampleDrug = sampleCount > 0 ? rowDrugAmount / sampleCount : 0;
+
       for (const sid of (f.samples || [])) {
         const sample = {
           id: sid,
@@ -139,7 +155,7 @@ const ExperimentData = (() => {
           formulation: f.name,
           formulationComponents: f.components,
           formulationTotal: f.total,
-          totalDrug: parseFloat(data.totalDrug) || 0,
+          totalDrug: perSampleDrug,
           group: data.groupName || data.experimentName || '',
           timePoints: [],
           absorbance: [],
@@ -159,6 +175,14 @@ const ExperimentData = (() => {
         }
         group.samples.push(sample);
       }
+
+      f.perRowDrugAmount = rowDrugAmount;
+      f.perRowDrugConc = rowData.drugConc !== undefined
+        ? parseFloat(rowData.drugConc) || 0
+        : (parseFloat(data.drugConc) || 0);
+      f.perRowDrugConcMode = rowData.drugConcMode || data.drugConcMode || 'manual';
+      if (rowData.drugConcFormula) f.perRowDrugConcFormula = rowData.drugConcFormula;
+      if (rowData._values) f._rowData = rowData._values;
     }
 
     group.name = data.experimentName || group.name;
@@ -167,12 +191,13 @@ const ExperimentData = (() => {
     group.drugConc = data.drugConc || group.drugConc;
     group.formulations = formulations;
 
+    // 清理可能被删除的样品的旧编辑数据
     const currentIds = new Set(group.samples.map(s => s.id));
     for (const oldId of Object.keys(_dataOverrides[experimentId] || {})) {
       if (!currentIds.has(oldId)) delete _dataOverrides[experimentId][oldId];
     }
 
-    _saveToServer();
+    _saveToStorage();
     return group;
   }
 
@@ -182,12 +207,11 @@ const ExperimentData = (() => {
     _userExperiments.splice(idx, 1);
     delete _dataOverrides[experimentId];
     delete _savedReports[experimentId];
-    _saveToServer();
+    _saveToStorage();
     return true;
   }
 
   // ========== 样品查询 ==========
-
   function getExperimentSamples(experimentId) {
     const group = getExperiment(experimentId);
     return group ? group.samples : [];
@@ -198,8 +222,7 @@ const ExperimentData = (() => {
     return samples.find(s => s.id === sampleId) || null;
   }
 
-  // ========== 表格数据持久化 ==========
-
+  // ========== 表格数据持久化（实验隔离） ==========
   function saveTableData(experimentId, sampleId, rows) {
     if (!_dataOverrides[experimentId]) _dataOverrides[experimentId] = {};
     _dataOverrides[experimentId][sampleId] = {
@@ -208,7 +231,7 @@ const ExperimentData = (() => {
       sampleVols: rows.map(r => r.sampleVol),
       totalVols: rows.map(r => r.totalVol)
     };
-    _saveToServer();
+    _saveToStorage();
   }
 
   function getSavedTableData(experimentId, sampleId) {
@@ -219,17 +242,16 @@ const ExperimentData = (() => {
   function clearSavedTableData(experimentId, sampleId) {
     if (_dataOverrides[experimentId]) {
       delete _dataOverrides[experimentId][sampleId];
-      _saveToServer();
+      _saveToStorage();
     }
   }
 
-  // ========== 报告管理 ==========
-
+  // ========== 报告管理（实验隔离） ==========
   function saveReport(experimentId, sampleId, report) {
     if (!_savedReports[experimentId]) _savedReports[experimentId] = {};
     if (!_savedReports[experimentId][sampleId]) _savedReports[experimentId][sampleId] = [];
     _savedReports[experimentId][sampleId].push(report);
-    _saveToServer();
+    _saveToStorage();
   }
 
   function getReports(experimentId, sampleId) {
@@ -240,8 +262,69 @@ const ExperimentData = (() => {
   function deleteReport(experimentId, sampleId, index) {
     if (_savedReports[experimentId] && _savedReports[experimentId][sampleId]) {
       _savedReports[experimentId][sampleId].splice(index, 1);
-      _saveToServer();
+      _saveToStorage();
     }
+  }
+
+  // ========== 新增：每行独立药量/浓度更新（每行独立药量模式） ==========
+  /**
+   * 更新某一行的独立药量/浓度数据
+   * @param {string} experimentId - 实验组ID
+   * @param {number} rowIndex - 行索引
+   * @param {number} drugAmount - 本行加入药量(mg)
+   * @param {number} drugConc - 本行载药浓度(mg/ml)
+   * @param {string} concMode - 'manual' 或 'formula'
+   * @param {string} concFormula - 自定义公式（可选）
+   */
+  function updateRowDrugData(experimentId, rowIndex, drugAmount, drugConc, concMode, concFormula) {
+    const group = _userExperiments.find(e => e.id === experimentId);
+    if (!group) return;
+    const formulation = group.formulations[rowIndex];
+    if (!formulation) return;
+
+    formulation.perRowDrugAmount = drugAmount;
+    formulation.perRowDrugConc = drugConc;
+    formulation.perRowDrugConcMode = concMode;
+    if (concFormula) formulation.perRowDrugConcFormula = concFormula;
+
+    // 更新关联样品的 totalDrug
+    const sampleCount = formulation.samples.length;
+    if (sampleCount > 0) {
+      const perSample = drugAmount / sampleCount;
+      for (const sample of group.samples) {
+        if (sample.formulation === formulation.name) {
+          sample.totalDrug = perSample;
+        }
+      }
+    }
+    _saveToStorage();
+  }
+
+  // ========== 模板数据持久化 ==========
+  /**
+   * 获取所有模板（从 user_data /api/data/template）
+   * 注：本地模式使用 localStorage + user_data 统一存储
+   */
+  async function getTemplates() {
+    try {
+      const raw = localStorage.getItem('FasudilLLC_Templates');
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return [];
+  }
+
+  async function saveTemplates(templates) {
+    try {
+      localStorage.setItem('FasudilLLC_Templates', JSON.stringify(templates));
+      // 同步到后端（静默失败，不影响本地操作）
+      for (const tpl of templates) {
+        await fetch('/api/data/template', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: tpl.id, value: tpl })
+        }).catch(() => {});
+      }
+    } catch {}
   }
 
   // ========== 公开 API ==========
@@ -259,6 +342,9 @@ const ExperimentData = (() => {
     saveReport,
     getReports,
     deleteReport,
-    _saveToServer
+    updateRowDrugData,
+    getTemplates,
+    saveTemplates,
+    _saveToStorage
   };
 })();

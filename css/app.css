@@ -64,8 +64,35 @@ body {
 
 .hidden { display: none !important; }
 
-/* ===== 登录页 ===== */
-.login-screen {
+/* ===== 协议警告 ===== */
+.setup-protocol-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--color-danger-bg);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--color-danger);
+  line-height: 1.6;
+}
+
+.setup-protocol-warning code {
+  background: rgba(231,76,60,0.15);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.setup-protocol-warning b {
+  font-weight: 600;
+}
+
+/* ===== 启动引导页 ===== */
+.setup-screen {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -73,7 +100,7 @@ body {
   background: linear-gradient(135deg, #f0f4f8 0%, #e8ecf4 100%);
 }
 
-.login-card {
+.setup-card {
   background: var(--color-bg-primary);
   border-radius: var(--radius-xl);
   padding: 48px 40px;
@@ -83,110 +110,29 @@ body {
   text-align: center;
 }
 
-.login-logo { margin-bottom: 16px; }
+.setup-logo { margin-bottom: 16px; }
 
-.login-title {
+.setup-title {
   font-size: 22px;
   font-weight: 500;
   color: var(--color-primary);
   margin-bottom: 4px;
 }
 
-.login-subtitle {
+.setup-subtitle {
   font-size: 14px;
   color: var(--color-text-secondary);
   margin-bottom: 32px;
 }
 
-.login-form-container {
-  text-align: left;
-}
-
-.login-form-group {
+.setup-desc {
+  font-size: 13px;
+  color: var(--color-text-secondary);
   margin-bottom: 20px;
+  line-height: 1.8;
 }
 
-.login-form-group label {
-  display: block;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--color-text-primary);
-  margin-bottom: 6px;
-}
-
-.login-form-group input {
-  width: 100%;
-  padding: 10px 14px;
-  border: 1.5px solid var(--color-border);
-  border-radius: var(--radius-md);
-  font-size: 14px;
-  color: var(--color-text-primary);
-  background: var(--color-bg-primary);
-  outline: none;
-  transition: border-color 0.2s;
-  box-sizing: border-box;
-}
-
-.login-form-group input:focus {
-  border-color: var(--color-teal);
-  box-shadow: 0 0 0 3px rgba(13,115,119,0.12);
-}
-
-.login-form-group input::placeholder {
-  color: var(--color-text-tertiary);
-}
-
-.login-otp-row {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-}
-
-.login-otp-row input {
-  flex: 1;
-}
-
-.login-otp-row button {
-  white-space: nowrap;
-  padding: 10px 16px;
-  font-size: 13px;
-  flex-shrink: 0;
-}
-
-.login-btn {
-  width: 100%;
-  padding: 12px;
-  font-size: 15px;
-  font-weight: 500;
-}
-
-.login-message {
-  margin-top: 12px;
-  padding: 10px 14px;
-  border-radius: var(--radius-md);
-  font-size: 13px;
-  text-align: center;
-}
-
-.login-message.success {
-  background: #e8f5e9;
-  color: #2e7d32;
-  border: 1px solid #a5d6a7;
-}
-
-.login-message.error {
-  background: #fbe9e7;
-  color: #c62828;
-  border: 1px solid #ef9a9a;
-}
-
-.login-message.info {
-  background: #e3f2fd;
-  color: #1565c0;
-  border: 1px solid #90caf9;
-}
-
-.login-status {
+.setup-status {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -194,20 +140,6 @@ body {
   padding: 20px;
 }
 
-.login-footer {
-  margin-top: 24px;
-  font-size: 12px;
-  color: var(--color-text-tertiary);
-}
-
-.login-otp-input {
-  letter-spacing: 4px;
-  font-size: 18px !important;
-  text-align: center;
-  font-weight: 600;
-}
-
-/* ===== 通用动画 ===== */
 .spinner {
   width: 24px;
   height: 24px;
@@ -218,6 +150,16 @@ body {
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+.setup-error {
+  background: var(--color-danger-bg);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.setup-error p { color: var(--color-danger); font-size: 13px; }
 
 /* ===== 按钮 ===== */
 .btn {
@@ -1239,6 +1181,108 @@ body {
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-md);
   background: var(--color-bg-primary);
+}
+
+/* ===== 模板管理 ===== */
+.template-card {
+  border: 1px solid var(--color-border-light);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 8px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.template-card:hover {
+  border-color: var(--color-teal);
+  box-shadow: 0 2px 8px rgba(13,115,119,0.08);
+}
+.tpl-column-row input[data-edit="label"],
+.tpl-column-row input[data-edit="formula"],
+.tpl-column-row input[data-edit="width"],
+.tpl-column-row select[data-edit="type"] {
+  font-size: 12px;
+  padding: 6px 8px;
+}
+.tpl-column-row input[data-edit="label"] { flex: 1; }
+
+/* ===== 日期选择器 ===== */
+.date-picker-panel {
+  position: fixed;
+  z-index: 10000;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  padding: 12px;
+  width: 280px;
+  display: none;
+}
+.date-picker-panel.visible { display: block; }
+.date-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.date-nav-btn {
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 16px;
+  color: var(--color-text-primary);
+}
+.date-nav-btn:hover { background: var(--color-bg-tertiary); }
+.date-nav-label { font-weight: 500; font-size: 14px; }
+.date-grid { width: 100%; border-collapse: collapse; }
+.date-grid th {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-tertiary);
+  padding: 4px;
+  text-align: center;
+}
+.date-grid td {
+  text-align: center;
+  padding: 6px 2px;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.date-grid td:hover { background: var(--color-bg-tertiary); }
+.date-grid td.date-today { font-weight: 600; color: var(--color-teal); }
+.date-grid td.date-selected { background: var(--color-teal); color: #fff; font-weight: 600; }
+.date-grid td.date-empty { cursor: default; }
+
+/* ===== 载药浓度模式切换 ===== */
+.cf-mode-select {
+  font-size: 11px;
+  padding: 2px 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-primary);
+  margin-bottom: 2px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.cf-conc-value { margin-top: 2px; }
+
+/* ===== 公式校验弹窗 ===== */
+.formula-validation-dialog {
+  text-align: center;
+  padding: 12px;
+}
+.formula-validation-dialog .validation-icon {
+  font-size: 32px;
+  margin-bottom: 12px;
+}
+
+/* ===== AI 生成公式弹窗 ===== */
+.ai-formula-dialog textarea {
+  width: 100%;
+  min-height: 80px;
+  box-sizing: border-box;
+  resize: vertical;
 }
 
 /* ===== 响应式 ===== */

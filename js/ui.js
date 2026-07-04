@@ -218,180 +218,179 @@ const UI = (() => {
     return html;
   }
 
-  /** 渲染登录表单（EdgeOne 版 OTP 登录） */
-  function renderLoginForm(container) {
-    container.innerHTML = `
-      <div class="login-form-group">
-        <label for="login-email">邮箱地址</label>
-        <input type="email" id="login-email" placeholder="请输入您的邮箱" autocomplete="email" autofocus>
-      </div>
-      <div class="login-form-group">
-        <label for="login-otp">验证码</label>
-        <div class="login-otp-row">
-          <input type="text" id="login-otp" class="login-otp-input" placeholder="000000" maxlength="6" inputmode="numeric" autocomplete="one-time-code">
-          <button id="btn-send-otp" class="btn btn-secondary">发送验证码</button>
-        </div>
-      </div>
-      <button id="btn-login" class="btn btn-primary login-btn" disabled>登录</button>
-      <div id="login-message" class="login-message" style="display:none"></div>
-      <div class="login-footer">
-        验证码将发送到您的邮箱，有效期 10 分钟
+  // --- 弹窗式输入框（替代 window.prompt） ---
+  function prompt(title, defaultValue = '', onConfirm) {
+    const body = `
+      <div class="prompt-dialog">
+        <p style="color:var(--color-text-secondary);margin-bottom:12px;font-size:14px">${title}</p>
+        <input class="form-input" id="prompt-input" value="${defaultValue}" autofocus style="width:100%;box-sizing:border-box">
       </div>
     `;
+    const footer = `
+      <button class="btn btn-secondary" onclick="UI.hideModal()">取消</button>
+      <button class="btn btn-primary" id="prompt-confirm-btn">确认</button>
+    `;
+    showModal('输入', body, footer);
+    const input = document.getElementById('prompt-input');
+    input.focus();
+    input.select();
+    input.onkeydown = (e) => {
+      if (e.key === 'Enter') document.getElementById('prompt-confirm-btn').click();
+    };
+    document.getElementById('prompt-confirm-btn').onclick = () => {
+      const val = document.getElementById('prompt-input').value;
+      hideModal();
+      if (onConfirm) onConfirm(val);
+    };
+  }
 
-    // 绑定事件
-    const emailInput = document.getElementById('login-email');
-    const otpInput = document.getElementById('login-otp');
-    const sendBtn = document.getElementById('btn-send-otp');
-    const loginBtn = document.getElementById('btn-login');
-    const msgEl = document.getElementById('login-message');
+  // --- 弹窗式提示（替代 window.alert） ---
+  function alert(title, message, onClose) {
+    const body = `<p style="color:var(--color-text-secondary);line-height:1.8;font-size:14px">${message}</p>`;
+    const footer = `<button class="btn btn-primary" id="alert-close-btn">确定</button>`;
+    showModal(title, body, footer);
+    document.getElementById('alert-close-btn').onclick = () => {
+      hideModal();
+      if (onClose) onClose();
+    };
+  }
 
-    let sendingOtp = false;
-    let verifyingOtp = false;
-    let cooldownTimer = null;
-    let cooldownSeconds = 0;
-
-    // 邮箱校验
-    function isValidEmail(email) {
-      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-    }
-
-    // 显示消息
-    function showMessage(text, type) {
-      msgEl.style.display = 'block';
-      msgEl.className = `login-message ${type}`;
-      msgEl.textContent = text;
-    }
-
-    function clearMessage() {
-      msgEl.style.display = 'none';
-    }
-
-    // 更新登录按钮状态
-    function updateLoginBtn() {
-      loginBtn.disabled = verifyingOtp || !otpInput.value || otpInput.value.length < 6;
-    }
-
-    // 发送验证码
-    sendBtn.addEventListener('click', async () => {
-      const email = emailInput.value.trim();
-      if (!isValidEmail(email)) {
-        showMessage('请输入有效的邮箱地址', 'error');
-        emailInput.focus();
-        return;
-      }
-
-      if (sendingOtp) return;
-      sendingOtp = true;
-      sendBtn.disabled = true;
-      sendBtn.textContent = '发送中...';
-      clearMessage();
-
-      try {
-        const res = await fetch('/api/auth/otp/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email })
-        });
-        const data = await res.json();
-        if (data.success) {
-          showMessage(data.message || '验证码已发送，请查收邮件', 'success');
-          startCooldown();
-        } else {
-          showMessage(data.error || '发送失败', 'error');
-          sendBtn.disabled = false;
-          sendBtn.textContent = '发送验证码';
+  // --- 公式校验结果弹窗 ---
+  function showFormulaValidation(result) {
+    const icon = result.valid ? '✅' : '❌';
+    const body = `
+      <div class="formula-validation-dialog">
+        <div style="text-align:center;font-size:32px;margin-bottom:12px">${icon}</div>
+        ${result.valid
+          ? `<p style="color:var(--color-success);text-align:center">公式语法检查通过</p>
+             <p style="color:var(--color-text-secondary);text-align:center;margin-top:8px">
+               预览结果: <strong style="color:var(--color-text-primary)">${result.preview}</strong>
+             </p>`
+          : `<p style="color:var(--color-danger);text-align:center">公式语法错误</p>
+             <p style="color:var(--color-text-secondary);text-align:center;margin-top:8px">${result.error}</p>`
         }
-      } catch (err) {
-        showMessage('网络错误，请重试', 'error');
-        sendBtn.disabled = false;
-        sendBtn.textContent = '发送验证码';
-      } finally {
-        sendingOtp = false;
-      }
-    });
+      </div>
+    `;
+    const footer = `<button class="btn btn-primary" onclick="UI.hideModal()">确定</button>`;
+    showModal('公式校验', body, footer);
+  }
 
-    // 60秒倒计时
-    function startCooldown() {
-      cooldownSeconds = 60;
-      sendBtn.disabled = true;
-      sendBtn.textContent = `${cooldownSeconds}s 后重新发送`;
-      cooldownTimer = setInterval(() => {
-        cooldownSeconds--;
-        if (cooldownSeconds <= 0) {
-          clearInterval(cooldownTimer);
-          sendBtn.disabled = false;
-          sendBtn.textContent = '发送验证码';
-        } else {
-          sendBtn.textContent = `${cooldownSeconds}s 后重新发送`;
-        }
-      }, 1000);
+  // --- 内部日期选择器（替代浏览器原生 date picker） ---
+  // 状态管理
+  const _datePicker = {
+    currentYear: 0,
+    currentMonth: 0,
+    selectedDate: '',
+    onSelect: null,
+  };
+
+  /** 渲染日期选择器面板 */
+  function renderDatePicker(inputId, currentValue, onSelect) {
+    const now = currentValue ? new Date(currentValue) : new Date();
+    _datePicker.currentYear = now.getFullYear();
+    _datePicker.currentMonth = now.getMonth();
+    _datePicker.selectedDate = currentValue;
+    _datePicker.onSelect = onSelect;
+
+    const input = document.getElementById(inputId);
+    if (!input) return;
+
+    // 创建面板（如果不存在）
+    let panel = document.getElementById('date-picker-panel');
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = 'date-picker-panel';
+      panel.className = 'date-picker-panel';
+      document.body.appendChild(panel);
     }
 
-    // OTP 输入校验
-    otpInput.addEventListener('input', () => {
-      otpInput.value = otpInput.value.replace(/\D/g, '').slice(0, 6);
-      updateLoginBtn();
+    // 点击 input 时切换面板
+    input.onclick = (e) => {
+      e.stopPropagation();
+      const rect = input.getBoundingClientRect();
+      panel.style.top = (rect.bottom + 4) + 'px';
+      panel.style.left = rect.left + 'px';
+      panel.classList.toggle('visible');
+      _renderDateGrid(panel);
+    };
+
+    // 点击外部关闭
+    document.addEventListener('click', (e) => {
+      if (!panel.contains(e.target) && e.target !== input) {
+        panel.classList.remove('visible');
+      }
     });
 
-    emailInput.addEventListener('input', () => {
-      if (msgEl.style.display !== 'none') clearMessage();
-    });
+    // 初始渲染
+    _renderDateGrid(panel);
+  }
 
-    // 登录
-    loginBtn.addEventListener('click', async () => {
-      const email = emailInput.value.trim();
-      const otp = otpInput.value.trim();
+  /** 渲染日期网格 */
+  function _renderDateGrid(panel) {
+    const { currentYear, currentMonth, selectedDate } = _datePicker;
 
-      if (!isValidEmail(email)) {
-        showMessage('请输入有效的邮箱地址', 'error');
-        return;
-      }
-      if (otp.length < 6) {
-        showMessage('请输入完整的 6 位验证码', 'error');
-        return;
-      }
+    const monthNames = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+    const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+    const firstDay = new Date(currentYear, currentMonth, 1).getDay();
 
-      if (verifyingOtp) return;
-      verifyingOtp = true;
-      loginBtn.disabled = true;
-      loginBtn.textContent = '登录中...';
-      clearMessage();
+    let html = `
+      <div class="date-picker-header">
+        <button class="date-nav-btn" onclick="UI._dateNav(-1)">‹</button>
+        <span class="date-nav-label">${currentYear}年 ${monthNames[currentMonth]}</span>
+        <button class="date-nav-btn" onclick="UI._dateNav(1)">›</button>
+      </div>
+      <table class="date-grid">
+        <thead><tr><th>日</th><th>一</th><th>二</th><th>三</th><th>四</th><th>五</th><th>六</th></tr></thead>
+        <tbody>
+    `;
 
-      try {
-        const res = await fetch('/api/auth/otp/verify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, otp })
-        });
-        const data = await res.json();
-        if (data.success) {
-          showMessage('登录成功，正在跳转...', 'success');
-          // 硬跳转，携带 Cookie
-          setTimeout(() => { window.location.href = '/'; }, 300);
+    let day = 1;
+    for (let row = 0; row < 6; row++) {
+      if (day > daysInMonth) break;
+      html += '<tr>';
+      for (let col = 0; col < 7; col++) {
+        if ((row === 0 && col < firstDay) || day > daysInMonth) {
+          html += '<td class="date-empty"></td>';
         } else {
-          showMessage(data.error || '验证失败，请重试', 'error');
-          loginBtn.disabled = false;
-          loginBtn.textContent = '登录';
+          const dateStr = `${currentYear}-${String(currentMonth+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+          const isToday = dateStr === new Date().toISOString().slice(0, 10);
+          const isSelected = dateStr === selectedDate;
+          html += `<td class="${isToday?'date-today':''} ${isSelected?'date-selected':''}"
+                    onclick="UI._dateSelect('${dateStr}')">${day}</td>`;
+          day++;
         }
-      } catch (err) {
-        showMessage('网络错误，请重试', 'error');
-        loginBtn.disabled = false;
-        loginBtn.textContent = '登录';
-      } finally {
-        verifyingOtp = false;
       }
-    });
+      html += '</tr>';
+    }
 
-    // Enter 键触发
-    otpInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !loginBtn.disabled) loginBtn.click();
-    });
-    emailInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        if (!sendBtn.disabled) sendBtn.click();
-      }
-    });
+    html += '</tbody></table>';
+    panel.innerHTML = html;
+  }
+
+  /** 日期导航 */
+  function _dateNav(delta) {
+    _datePicker.currentMonth += delta;
+    if (_datePicker.currentMonth > 11) { _datePicker.currentMonth = 0; _datePicker.currentYear++; }
+    if (_datePicker.currentMonth < 0) { _datePicker.currentMonth = 11; _datePicker.currentYear--; }
+    const panel = document.getElementById('date-picker-panel');
+    if (panel) _renderDateGrid(panel);
+  }
+
+  /** 选择日期 */
+  function _dateSelect(dateStr) {
+    _datePicker.selectedDate = dateStr;
+    if (_datePicker.onSelect) _datePicker.onSelect(dateStr);
+    const panel = document.getElementById('date-picker-panel');
+    if (panel) {
+      panel.classList.remove('visible');
+      _renderDateGrid(panel);
+    }
+  }
+
+  /** 清理日期选择器 */
+  function destroyDatePicker() {
+    const panel = document.getElementById('date-picker-panel');
+    if (panel) panel.remove();
   }
 
   // --- 空状态 ---
@@ -414,6 +413,13 @@ const UI = (() => {
     showModal,
     hideModal,
     confirm,
+    prompt,
+    alert,
+    showFormulaValidation,
+    renderDatePicker,
+    destroyDatePicker,
+    _dateNav,
+    _dateSelect,
     renderTable,
     renderTabs,
     switchTab,
@@ -422,7 +428,6 @@ const UI = (() => {
     renderAlerts,
     renderImageGallery,
     renderTimeline,
-    renderLoginForm,
     renderEmptyState,
     formatCell
   };

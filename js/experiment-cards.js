@@ -486,8 +486,232 @@ const ExperimentCards = (() => {
   }
 
   // ============================================================
-  // 创建实验组对话框
+  // 创建实验组对话框（重构版：动态列 + 每行独立药量/浓度 + 模板联动）
   // ============================================================
+
+  /** 当前使用的模板（由 showCreateDialog 加载时设置） */
+  let _currentCreateTemplate = null;
+
+  /** 内置默认模板（无模板配置时的回退） */
+  function _getBuiltinDefaultTemplate() {
+    return {
+      id: '_builtin_default',
+      name: '默认处方模板',
+      isDefault: true,
+      enabled: true,
+      columns: [
+        { id:'formulationName', label:'处方名称',     type:'text',    width:'90px',  order:0, default:'' },
+        { id:'spc',   label:'SPC',    type:'number', unit:'g',  width:'65px', order:1, default:0 },
+        { id:'gmo',   label:'GMO',    type:'number', unit:'g',  width:'65px', order:2, default:0 },
+        { id:'nmp',   label:'NMP',    type:'number', unit:'g',  width:'65px', order:3, default:0 },
+        { id:'water', label:'水',      type:'number', unit:'g',  width:'55px', order:4, default:0 },
+        { id:'etoh',  label:'EtOH',   type:'number', unit:'g',  width:'65px', order:5, default:0 },
+        { id:'dopg',  label:'DOPG-Na',type:'number', unit:'g',  width:'75px', order:6, default:0 },
+        { id:'rowTotal',  label:'本行总重', type:'computed', width:'65px', order:7,
+          formula:'spc+gmo+nmp+water+etoh+dopg', formulaDescription:'SPC+GMO+NMP+水+EtOH+DOPG-Na之和' },
+        { id:'drugAmount', label:'本行加入药量', type:'number', unit:'mg', width:'85px', order:8, default:0 },
+        { id:'drugConc',   label:'本行载药浓度', type:'dynamic', width:'95px', order:9,
+          modes:[{ id:'manual', label:'手动输入' }, { id:'formula', label:'公式计算' }],
+          defaultMode:'manual' },
+        { id:'samples', label:'对应样品', type:'text', width:'115px', order:10, default:'' },
+      ]
+    };
+  }
+
+  /** 加载默认模板 */
+  async function _loadDefaultTemplate() {
+    try {
+      const templates = await ExperimentData.getTemplates();
+      if (templates && templates.length > 0) {
+        const def = templates.find(t => t.isDefault && t.enabled);
+        if (def) return def;
+        return templates.find(t => t.enabled) || _getBuiltinDefaultTemplate();
+      }
+    } catch {}
+    return _getBuiltinDefaultTemplate();
+  }
+
+  /** 根据模板列配置渲染表格表头 */
+  function _renderFormTableHead(columns) {
+    let html = '<thead><tr>';
+    columns.forEach(col => {
+      let label = col.label;
+      if (col.unit && (col.type === 'number' || col.type === 'computed')) {
+        label += `<sub style="font-size:10px;color:var(--color-text-tertiary)">(${col.unit})</sub>`;
+      }
+      html += `<th style="width:${col.width};font-size:11px;padding:8px 2px">${label}</th>`;
+    });
+    html += '</tr></thead>';
+    return html;
+  }
+
+  /** 根据模板列配置渲染单行（用于新建或编辑时的回填） */
+  function _renderFormRow(columns, formData) {
+    let html = '<tr class="form-row-entry">';
+    columns.forEach(col => {
+      switch(col.type) {
+        case 'text':
+          const textVal = formData ? (formData.name || formData[col.id] || '') : '';
+          html += `<td><input class="cf-input cf-name" data-field="${col.id}" value="${textVal}" placeholder="${col.default||''}"></td>`;
+          break;
+        case 'number':
+          let numVal = 0;
+          if (formData) {
+            if (col.id === 'drugAmount') {
+              numVal = formData.perRowDrugAmount !== undefined ? formData.perRowDrugAmount : 0;
+            } else if (formData.components && formData.components[col.id] !== undefined) {
+              numVal = formData.components[col.id];
+            } else if (formData._rowData && formData._rowData[col.id] !== undefined) {
+              numVal = formData._rowData[col.id];
+            }
+          }
+          html += `<td><input class="cf-input" data-field="${col.id}" type="number" step="any"
+            value="${numVal.toFixed(2)}" placeholder="${(col.default||0).toFixed(2)}"
+            onwheel="return false" oninput="ExperimentCards.onCellChange()"></td>`;
+          break;
+        case 'computed':
+          html += `<td><span class="cf-total" data-field="${col.id}" data-formula="${col.formula||''}">0.00</span></td>`;
+          break;
+        case 'dynamic':
+          const concMode = formData ? (formData.perRowDrugConcMode || 'manual') : 'manual';
+          const concVal = formData ? (formData.perRowDrugConc || 0) : 0;
+          html += `<td><div class="cf-conc-mode">
+            <select class="cf-mode-select" data-field="${col.id}-mode"
+              onchange="ExperimentCards.onConcModeChange(this)">
+              ${(col.modes||[]).map(m =>
+                `<option value="${m.id}" ${m.id===concMode?'selected':''}>${m.label}</option>`
+              ).join('')}
+            </select>
+            <input class="cf-input cf-conc-value" data-field="${col.id}" type="number" step="any"
+              value="${concVal.toFixed(2)}" onwheel="return false"
+              oninput="ExperimentCards.onCellChange()"
+              style="${concMode==='formula'?'display:none':''}">
+            <span class="cf-conc-formula-text" data-field="${col.id}-formula"
+              style="${concMode==='formula'?'':'display:none'};font-size:11px;color:var(--color-text-tertiary)">
+              ${formData && formData.perRowDrugConcFormula ? formData.perRowDrugConcFormula : '公式待配置'}
+            </span>
+          </div></td>`;
+          break;
+      }
+    });
+    html += '</tr>';
+    return html;
+  }
+
+  /** 渲染模板选择器 */
+  function _renderTemplateSelector(templates, currentTplId) {
+    const enabledTpls = templates.filter(t => t.enabled);
+    if (enabledTpls.length <= 1) return ''; // 只有默认模板时不显示选择器
+    return `
+      <div class="form-row" style="margin-bottom:8px">
+        <div class="form-group" style="flex:1">
+          <label class="form-label" style="font-size:12px">使用模板</label>
+          <select class="form-input" id="create-template-select"
+            onchange="ExperimentCards.onTemplateChange(this.value)">
+            ${enabledTpls.map(t =>
+              `<option value="${t.id}" ${t.id===currentTplId?'selected':''}>
+                ${t.name}${t.isDefault ? ' (默认)' : ''}
+              </option>`
+            ).join('')}
+          </select>
+        </div>
+      </div>
+    `;
+  }
+
+  /** 安全计算公式 */
+  function _evaluateFormula(formula, tr) {
+    if (!formula) return 0;
+    try {
+      // 替换变量为当前行对应输入的值或计算值
+      let resolved = formula;
+      resolved = resolved.replace(/([a-zA-Z_]\w*)/g, (match) => {
+        if (/^\d+\.?\d*$/.test(match)) return match; // 数字字面量
+        if (['true','false','null','undefined','NaN','Infinity'].includes(match)) return match; // 关键字
+        if (/^[\d+\-*/()., ]+$/.test(match)) return match; // 运算符或数字
+        const el = tr.querySelector(`[data-field="${match}"]`);
+        if (el) {
+          const val = parseFloat(el.value !== undefined ? el.value : el.textContent);
+          return isNaN(val) ? '0' : String(val);
+        }
+        return '0';
+      });
+      // 安全执行，禁止访问全局对象
+      const fn = new Function('return (' + resolved + ')');
+      const result = fn();
+      return isNaN(result) ? 0 : result;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** 输入变化时实时重新计算所有 computed 列 */
+  function onCellChange() {
+    const tbody = document.getElementById('create-form-tbody');
+    if (!tbody) return;
+    tbody.querySelectorAll('tr.form-row-entry').forEach(tr => {
+      // 计算所有 computed 列
+      tr.querySelectorAll('[data-formula]').forEach(el => {
+        const formula = el.dataset.formula;
+        if (formula) {
+          const result = _evaluateFormula(formula, tr);
+          el.textContent = result.toFixed(2);
+        }
+      });
+
+      // 如果载药浓度模式为 formula，自动计算
+      const modeEl = tr.querySelector('[data-field="drugConc-mode"]');
+      if (modeEl && modeEl.value === 'formula') {
+        const concInput = tr.querySelector('[data-field="drugConc"]');
+        const formulaEl = tr.querySelector('[data-field="drugConc-formula"]');
+        if (concInput && formulaEl) {
+          const formula = formulaEl.textContent.trim();
+          if (formula && formula !== '公式待配置') {
+            const result = _evaluateFormula(formula, tr);
+            concInput.value = result.toFixed(2);
+          }
+        }
+      }
+    });
+  }
+
+  /** 载药浓度模式切换 */
+  function onConcModeChange(select) {
+    const tr = select.closest('tr');
+    const mode = select.value;
+    const concInput = tr.querySelector('[data-field="drugConc"]');
+    const formulaText = tr.querySelector('[data-field="drugConc-formula"]');
+    if (concInput) concInput.style.display = mode === 'formula' ? 'none' : '';
+    if (formulaText) formulaText.style.display = mode === 'formula' ? '' : 'none';
+    if (mode === 'formula') onCellChange();
+  }
+
+  /** 切换模板时重新渲染整个表格 */
+  async function onTemplateChange(tplId) {
+    const templates = await ExperimentData.getTemplates();
+    const tpl = templates.find(t => t.id === tplId) || _getBuiltinDefaultTemplate();
+    _currentCreateTemplate = tpl;
+    const tbody = document.getElementById('create-form-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    // 重新渲染表头
+    const thead = tbody.closest('table').querySelector('thead');
+    if (thead) {
+      const newThead = document.createElement('thead');
+      newThead.innerHTML = _renderFormTableHead(tpl.columns);
+      thead.replaceWith(newThead);
+    }
+    // 重新设置 colgroup
+    const table = tbody.closest('table');
+    let colgroup = table.querySelector('colgroup');
+    if (!colgroup) { colgroup = document.createElement('colgroup'); table.insertBefore(colgroup, table.firstChild); }
+    colgroup.innerHTML = tpl.columns.map(c => `<col style="width:${c.width}">`).join('');
+    // 添加一行默认行
+    addFormRow();
+    onCellChange();
+  }
+
+  /** 显示创建/编辑实验组弹窗（改造版） */
   function showCreateDialog(editGroup) {
     const now = new Date().toISOString().slice(0, 10);
     const isEdit = !!editGroup;
@@ -495,159 +719,254 @@ const ExperimentCards = (() => {
     const btnLabel = isEdit ? '保存修改' : '确认创建';
     const initName = isEdit ? editGroup.name : '';
     const initDate = isEdit ? (editGroup.date || now) : now;
-    const initDrug = isEdit ? (editGroup.drugAmount || '') : '';
     const initForms = isEdit ? (editGroup.formulations || []) : [];
 
-    let formRowsHtml = '';
-    if (initForms.length > 0) {
-      initForms.forEach(f => {
-        const c = f.components || {};
-        formRowsHtml += `<tr class="form-row-entry">
-          <td><input class="cf-input cf-name" data-field="formulationName" value="${f.name}"></td>
-          <td><input class="cf-input" data-field="spc" type="number" step="any" value="${(c.SPC||0).toFixed(2)}" onwheel="return false" oninput="ExperimentCards.updateFormTotal()"></td>
-          <td><input class="cf-input" data-field="gmo" type="number" step="any" value="${(c.GMO||0).toFixed(2)}" onwheel="return false" oninput="ExperimentCards.updateFormTotal()"></td>
-          <td><input class="cf-input" data-field="nmp" type="number" step="any" value="${(c.NMP||0).toFixed(2)}" onwheel="return false" oninput="ExperimentCards.updateFormTotal()"></td>
-          <td><input class="cf-input" data-field="water" type="number" step="any" value="${(c.水||0).toFixed(2)}" onwheel="return false" oninput="ExperimentCards.updateFormTotal()"></td>
-          <td><input class="cf-input" data-field="etoh" type="number" step="any" value="${(c.EtOH||0).toFixed(2)}" onwheel="return false" oninput="ExperimentCards.updateFormTotal()"></td>
-          <td><input class="cf-input" data-field="dopg" type="number" step="any" value="${(c['DOPG-Na']||0).toFixed(2)}" onwheel="return false" oninput="ExperimentCards.updateFormTotal()"></td>
-          <td><span class="cf-total" data-field="total">${(f.total||0).toFixed(2)}</span></td>
-          <td><input class="cf-input cf-samples" data-field="samples" value="${(f.samples||[]).join('、')}"></td>
-        </tr>`;
-      });
-    } else {
-      formRowsHtml = `<tr class="form-row-entry">
-        <td><input class="cf-input cf-name" data-field="formulationName" placeholder="如 GMO-N" value=""></td>
-        <td><input class="cf-input" data-field="spc" type="number" step="any" value="" placeholder="0" onwheel="return false" oninput="ExperimentCards.updateFormTotal()"></td>
-        <td><input class="cf-input" data-field="gmo" type="number" step="any" value="" placeholder="0" onwheel="return false" oninput="ExperimentCards.updateFormTotal()"></td>
-        <td><input class="cf-input" data-field="nmp" type="number" step="any" value="" placeholder="0" onwheel="return false" oninput="ExperimentCards.updateFormTotal()"></td>
-        <td><input class="cf-input" data-field="water" type="number" step="any" value="" placeholder="0" onwheel="return false" oninput="ExperimentCards.updateFormTotal()"></td>
-        <td><input class="cf-input" data-field="etoh" type="number" step="any" value="" placeholder="0" onwheel="return false" oninput="ExperimentCards.updateFormTotal()"></td>
-        <td><input class="cf-input" data-field="dopg" type="number" step="any" value="" placeholder="0" onwheel="return false" oninput="ExperimentCards.updateFormTotal()"></td>
-        <td><span class="cf-total" data-field="total">0.00</span></td>
-        <td><input class="cf-input cf-samples" data-field="samples" placeholder="如 N1、N2" value=""></td>
-      </tr>`;
-    }
+    // 异步加载模板后渲染弹窗
+    _loadDefaultTemplate().then(async (tpl) => {
+      _currentCreateTemplate = tpl;
+      const allTemplates = await ExperimentData.getTemplates();
 
-    const body = `
-      <style>.create-form-table{width:100%;border-collapse:collapse;table-layout:fixed}.create-form-table th{font-size:12px;font-weight:500;color:var(--color-text-secondary);background:var(--color-bg-tertiary);padding:10px 4px;text-align:center;border:1px solid var(--color-border)}.create-form-table td{padding:4px;border:1px solid var(--color-border-light)}.create-form-table .cf-input{width:100%;min-width:0;border:1px solid var(--color-border);padding:6px 8px;border-radius:var(--radius-sm);font-size:13px;font-family:var(--font-sans);background:var(--color-bg-primary);outline:none;box-sizing:border-box;transition:border-color .15s}.create-form-table .cf-input:focus{border-color:var(--color-teal);box-shadow:0 0 0 2px rgba(13,115,119,.12)}.create-form-table .cf-input[type="number"]{text-align:right;font-family:var(--font-mono)}.create-form-table .cf-total{font-weight:600;color:var(--color-teal);font-family:var(--font-mono);text-align:center;font-size:14px;padding:7px 2px;background:var(--color-info-bg);border-radius:var(--radius-sm);display:block}</style>
-      <div class="form-row"><div class="form-group" style="flex:2"><label class="form-label">实验组名称 *</label><input class="form-input" id="create-exp-name" value="${initName}">${isEdit?`<input type="hidden" id="edit-group-id" value="${editGroup.id}">`:''}</div><div class="form-group" style="flex:1"><label class="form-label">日期</label><input class="form-input" id="create-exp-date" type="date" value="${initDate}"></div></div>
-      <label class="form-label" style="margin-bottom:4px">处方组成</label>
-      <table class="create-form-table"><colgroup><col style="width:90px"><col style="width:55px"><col style="width:55px"><col style="width:55px"><col style="width:50px"><col style="width:55px"><col style="width:65px"><col style="width:60px"><col style="width:115px"></colgroup><thead><tr><th>处方名称</th><th>SPC</th><th>GMO</th><th>NMP</th><th>水</th><th>EtOH</th><th>DOPG-Na</th><th>总重</th><th>对应样品</th></tr></thead><tbody id="create-form-tbody">${formRowsHtml}</tbody></table>
-      <div style="display:flex;gap:8px;margin-top:8px;align-items:center"><button class="btn btn-sm btn-secondary" onclick="ExperimentCards.addFormRow()">+ 添加处方</button><button class="btn btn-sm btn-secondary" onclick="ExperimentCards.removeLastFormRow()">− 删除末行</button><span style="font-size:11px;color:var(--color-text-tertiary)">每行一个处方，总重自动求和</span></div>
-      <label class="form-label" style="margin:8px 0 2px 0">实验参数</label>
-      <div class="form-row"><div class="form-group" style="flex:1"><label class="form-label">基重 (g)</label><div class="form-input" id="create-base-weight" style="background:var(--color-info-bg);color:var(--color-teal);font-weight:600;font-family:var(--font-mono)">0.00</div></div><div class="form-group" style="flex:1"><label class="form-label">加入药量 (mg) *</label><input class="form-input" id="create-drug-amount" type="number" step="any" value="${initDrug}" onwheel="return false" oninput="ExperimentCards.updateDrugLoading()"></div><div class="form-group" style="flex:1"><label class="form-label">载药浓度 (mg/ml)</label><div class="form-input" id="create-drug-conc" style="background:var(--color-info-bg);color:var(--color-teal);font-weight:600;font-family:var(--font-mono)">0.00</div></div></div>
-    `;
-    const footer = `<button class="btn btn-secondary" onclick="UI.hideModal()">取消</button><button class="btn btn-primary" id="create-exp-confirm">${btnLabel}</button>`;
-    UI.showModal(title, body, footer);
-    document.getElementById('create-exp-confirm').onclick = isEdit ? () => updateExperiment(editGroup.id) : createExperiment;
-    setTimeout(updateFormTotal, 50);
+      // 如果是编辑模式，尝试从实验组的 templateId 加载对应模板
+      let useTpl = tpl;
+      if (isEdit && editGroup.templateId) {
+        const matched = (allTemplates||[]).find(t => t.id === editGroup.templateId);
+        if (matched) useTpl = matched;
+      }
+      const columns = useTpl.columns;
+
+      // 渲染行数据
+      let formRowsHtml = '';
+      if (initForms.length > 0) {
+        initForms.forEach(f => {
+          formRowsHtml += _renderFormRow(columns, f);
+        });
+      } else {
+        formRowsHtml += _renderFormRow(columns, null);
+      }
+
+      // 内联样式（兼容现有弹窗）
+      const inlineStyle = `
+        <style>
+          .create-form-table{width:100%;border-collapse:collapse;table-layout:fixed}
+          .create-form-table th{font-size:12px;font-weight:500;color:var(--color-text-secondary);
+            background:var(--color-bg-tertiary);padding:10px 4px;text-align:center;border:1px solid var(--color-border)}
+          .create-form-table td{padding:4px;border:1px solid var(--color-border-light)}
+          .create-form-table .cf-input{width:100%;min-width:0;border:1px solid var(--color-border);padding:6px 8px;
+            border-radius:var(--radius-sm);font-size:13px;font-family:var(--font-sans);background:var(--color-bg-primary);
+            outline:none;box-sizing:border-box;transition:border-color .15s}
+          .create-form-table .cf-input:focus{border-color:var(--color-teal);box-shadow:0 0 0 2px rgba(13,115,119,.12)}
+          .create-form-table .cf-input[type="number"]{text-align:right;font-family:var(--font-mono)}
+          .create-form-table .cf-total{font-weight:600;color:var(--color-teal);font-family:var(--font-mono);
+            text-align:center;font-size:14px;padding:7px 2px;background:var(--color-info-bg);border-radius:var(--radius-sm);display:block}
+          .cf-mode-select{font-size:11px;padding:2px 4px;border:1px solid var(--color-border);border-radius:var(--radius-sm);
+            background:var(--color-bg-primary);margin-bottom:2px;width:100%;box-sizing:border-box}
+          .cf-conc-value{margin-top:2px}
+          .cf-conc-formula-text{display:block;padding:2px 4px;font-size:11px;color:var(--color-text-tertiary);word-break:break-all}
+        </style>
+      `;
+
+      const body = `
+        ${inlineStyle}
+        ${_renderTemplateSelector(allTemplates, useTpl.id)}
+        <div class="form-row">
+          <div class="form-group" style="flex:2">
+            <label class="form-label">实验组名称 *</label>
+            <input class="form-input" id="create-exp-name" value="${initName}">
+            ${isEdit ? `<input type="hidden" id="edit-group-id" value="${editGroup.id}">` : ''}
+          </div>
+          <div class="form-group" style="flex:1">
+            <label class="form-label">日期</label>
+            <input class="form-input" id="create-exp-date" value="${initDate}" readonly
+                   placeholder="点击选择日期"
+                   onclick="UI.renderDatePicker('create-exp-date','${initDate}',function(v){
+                     document.getElementById('create-exp-date').value=v;
+                   })">
+          </div>
+        </div>
+        <label class="form-label" style="margin-bottom:4px">处方组成</label>
+        <table class="create-form-table">
+          <colgroup>${columns.map(c => `<col style="width:${c.width}">`).join('')}</colgroup>
+          ${_renderFormTableHead(columns)}
+          <tbody id="create-form-tbody">${formRowsHtml}</tbody>
+        </table>
+        <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+          <button class="btn btn-sm btn-secondary" onclick="ExperimentCards.addFormRow()">+ 添加处方</button>
+          <button class="btn btn-sm btn-secondary" onclick="ExperimentCards.removeLastFormRow()">− 删除末行</button>
+          <span style="font-size:11px;color:var(--color-text-tertiary)">
+            每行独立药量、浓度配置，总重自动求和
+          </span>
+        </div>
+      `;
+
+      const footer = `
+        <button class="btn btn-secondary" onclick="UI.hideModal()">取消</button>
+        <button class="btn btn-primary" id="create-exp-confirm">${btnLabel}</button>
+      `;
+
+      UI.showModal(title, body, footer);
+      document.getElementById('create-exp-confirm').onclick =
+        isEdit ? () => updateExperiment(editGroup.id) : createExperiment;
+      setTimeout(onCellChange, 50);
+    });
   }
 
+  /** 添加一行处方 */
   function addFormRow() {
     const tbody = document.getElementById('create-form-tbody');
-    if (!tbody) return;
-    const idx = tbody.children.length + 1;
-    const tr = document.createElement('tr'); tr.className = 'form-row-entry';
-    tr.innerHTML = `<td><input class="cf-input cf-name" data-field="formulationName" placeholder="如 GMO-N" value=""></td><td><input class="cf-input" data-field="spc" type="number" step="any" value="" placeholder="0" onwheel="return false" oninput="ExperimentCards.updateFormTotal()"></td><td><input class="cf-input" data-field="gmo" type="number" step="any" value="" placeholder="0" onwheel="return false" oninput="ExperimentCards.updateFormTotal()"></td><td><input class="cf-input" data-field="nmp" type="number" step="any" value="" placeholder="0" onwheel="return false" oninput="ExperimentCards.updateFormTotal()"></td><td><input class="cf-input" data-field="water" type="number" step="any" value="" placeholder="0" onwheel="return false" oninput="ExperimentCards.updateFormTotal()"></td><td><input class="cf-input" data-field="etoh" type="number" step="any" value="" placeholder="0" onwheel="return false" oninput="ExperimentCards.updateFormTotal()"></td><td><input class="cf-input" data-field="dopg" type="number" step="any" value="" placeholder="0" onwheel="return false" oninput="ExperimentCards.updateFormTotal()"></td><td><span class="cf-total" data-field="total">0.00</span></td><td><input class="cf-input cf-samples" data-field="samples" placeholder="如 D1、D2" value=""></td>`;
+    if (!tbody || !_currentCreateTemplate) return;
+    const tr = document.createElement('tr');
+    tr.className = 'form-row-entry';
+    tr.innerHTML = _renderFormRow(_currentCreateTemplate.columns, null);
     tbody.appendChild(tr);
-    updateFormTotal();
+    onCellChange();
   }
 
+  /** 删除末行 */
   function removeLastFormRow() {
     const tbody = document.getElementById('create-form-tbody');
-    if (!tbody || tbody.children.length <= 1) { UI.toast('至少保留一个处方','warning'); return; }
+    if (!tbody || tbody.children.length <= 1) {
+      UI.toast('至少保留一个处方','warning');
+      return;
+    }
     tbody.removeChild(tbody.lastChild);
-    updateFormTotal();
+    onCellChange();
   }
 
-  function updateFormTotal() {
+  /** 收集当前弹窗中的行级数据 */
+  function _collectFormRows() {
     const tbody = document.getElementById('create-form-tbody');
-    if (!tbody) return;
-    tbody.querySelectorAll('tr').forEach(tr => {
-      const get = f => parseFloat(tr.querySelector(`[data-field="${f}"]`).value) || 0;
-      const sum = get('spc')+get('gmo')+get('nmp')+get('water')+get('etoh')+get('dopg');
-      tr.querySelector('[data-field="total"]').textContent = sum.toFixed(2);
-    });
-    updateDrugLoading();
+    if (!tbody) return { formulations: [], rows: [] };
+    const trs = tbody.querySelectorAll('tr.form-row-entry');
+    const formulations = [];
+    const rows = [];
+
+    for (const tr of trs) {
+      const getVal = (field) => {
+        const el = tr.querySelector(`[data-field="${field}"]`);
+        if (!el) return '';
+        if (el.tagName === 'INPUT') return el.value;
+        return el.textContent || '';
+      };
+
+      const fn = getVal('formulationName').trim();
+      if (!fn) { UI.toast('请填写所有处方名称','warning'); return null; }
+
+      // 收集数值列
+      const components = {};
+      let totalWeight = 0;
+      const columns = _currentCreateTemplate ? _currentCreateTemplate.columns : [];
+      const rowData = {};
+
+      columns.forEach(col => {
+        const val = parseFloat(getVal(col.id));
+        if (!isNaN(val) && col.type === 'number') {
+          components[col.id] = val;
+          totalWeight += val;
+        }
+        if (col.type === 'number') {
+          rowData[col.id] = isNaN(val) ? 0 : val;
+        } else if (col.type === 'computed') {
+          rowData[col.id] = parseFloat(getVal(col.id)) || 0;
+        } else if (col.type === 'dynamic') {
+          const concVal = parseFloat(getVal(col.id));
+          const modeEl = tr.querySelector(`[data-field="drugConc-mode"]`);
+          const mode = modeEl ? modeEl.value : 'manual';
+          const formulaEl = tr.querySelector(`[data-field="drugConc-formula"]`);
+          rowData[col.id] = isNaN(concVal) ? 0 : concVal;
+          rowData[col.id + '_mode'] = mode;
+          rowData[col.id + '_formula'] = formulaEl ? formulaEl.textContent.trim() : '';
+        }
+      });
+
+      // 收集样品ID
+      const samplesStr = getVal('samples');
+      const sids = samplesStr.split(/[,，\s、]+/).filter(s => s.length > 0);
+      if (sids.length === 0) {
+        UI.toast(`处方"${fn}"的对应样品不能为空`,'warning');
+        return null;
+      }
+
+      // 本行药量
+      const rowDrugAmount = rowData.drugAmount || 0;
+      const rowDrugConc = rowData.drugConc || 0;
+      const concMode = rowData.drugConc_mode || 'manual';
+      const concFormula = rowData.drugConc_formula || '';
+
+      formulations.push({
+        name: fn,
+        components,
+        total: totalWeight,
+        samples: sids,
+        perRowDrugAmount: rowDrugAmount,
+        perRowDrugConc: rowDrugConc,
+        perRowDrugConcMode: concMode,
+        perRowDrugConcFormula: concFormula,
+      });
+      rows.push({
+        drugAmount: rowDrugAmount,
+        drugConc: rowDrugConc,
+        drugConcMode: concMode,
+        drugConcFormula: concFormula,
+        _values: rowData,
+      });
+    }
+    return { formulations, rows };
   }
 
-  function updateDrugLoading() {
-    const tbody = document.getElementById('create-form-tbody');
-    if (!tbody) return;
-    const firstRow = tbody.querySelector('tr');
-    if (!firstRow) return;
-    const baseG = parseFloat(firstRow.querySelector('[data-field="total"]').textContent) || 0;
-    const drugMg = parseFloat(document.getElementById('create-drug-amount').value) || 0;
-    const conc = drugMg / (baseG + drugMg / 1000);
-    const baseEl = document.getElementById('create-base-weight');
-    const concEl = document.getElementById('create-drug-conc');
-    if (baseEl) baseEl.textContent = baseG.toFixed(2);
-    if (concEl) concEl.textContent = drugMg > 0 ? conc.toFixed(2) : '0.00';
-  }
-
+  /** 确认创建实验 */
   function createExperiment() {
     const name = document.getElementById('create-exp-name').value.trim();
     const date = document.getElementById('create-exp-date').value;
-    const drugAmount = parseFloat(document.getElementById('create-drug-amount').value);
-    const concEl = document.getElementById('create-drug-conc');
-    const drugConc = parseFloat(concEl ? concEl.textContent : '0');
     if (!name) { UI.toast('请输入实验组名称','warning'); return; }
-    if (isNaN(drugAmount) || drugAmount <= 0) { UI.toast('请输入加入药量','warning'); return; }
 
-    const tbody = document.getElementById('create-form-tbody');
-    const formRows = tbody.querySelectorAll('tr');
-    const formulations = []; const allSampleIds = [];
-    for (const tr of formRows) {
-      const get = f => tr.querySelector(`[data-field="${f}"]`).value.trim();
-      const fn = get('formulationName');
-      if (!fn) { UI.toast('请填写处方名称','warning'); return; }
-      const components = { SPC:parseFloat(get('spc'))||0, GMO:parseFloat(get('gmo'))||0, NMP:parseFloat(get('nmp'))||0, 水:parseFloat(get('water'))||0, EtOH:parseFloat(get('etoh'))||0, 'DOPG-Na':parseFloat(get('dopg'))||0 };
-      const ft = Object.values(components).reduce((a,b)=>a+b,0);
-      const st = get('samples');
-      const sids = st.split(/[,，\s、]+/).filter(s=>s.length>0);
-      if (sids.length===0) { UI.toast(`处方"${fn}"的对应样品不能为空`,'warning'); return; }
-      formulations.push({name:fn,components,total:ft,samples:sids});
-      allSampleIds.push(...sids);
-    }
-    const totalDrug = allSampleIds.length > 0 ? drugAmount / allSampleIds.length : 0;
+    const collected = _collectFormRows();
+    if (!collected) return;
 
-    const data = { experimentName:name, date, totalDrug, drugAmount, drugConc, groupName:name, formulations };
+    // 验证至少有一行的加入药量 > 0
+    const hasDrug = collected.rows.some(r => r.drugAmount > 0);
+    if (!hasDrug) { UI.toast('至少一个处方的加入药量必须大于 0','warning'); return; }
+
+    const data = {
+      experimentName: name,
+      date,
+      groupName: name,
+      formulations: collected.formulations,
+      rows: collected.rows,
+      templateId: _currentCreateTemplate ? _currentCreateTemplate.id : '',
+      drugAmount: collected.rows.reduce((s, r) => s + (r.drugAmount || 0), 0),
+      drugConc: collected.rows.reduce((s, r) => s + (r.drugConc || 0), 0) / collected.rows.length,
+    };
+
     const group = ExperimentData.createExperiment(data);
     UI.hideModal();
     UI.toast(`已创建「${name}」，${group.samples.length} 个样品`, 'success');
     App.navigate('experiments');
   }
 
+  /** 确认更新实验 */
   function updateExperiment(groupId) {
     const name = document.getElementById('create-exp-name').value.trim();
     const date = document.getElementById('create-exp-date').value;
-    const drugAmount = parseFloat(document.getElementById('create-drug-amount').value);
-    const concEl = document.getElementById('create-drug-conc');
-    const drugConc = parseFloat(concEl ? concEl.textContent : '0');
     if (!name) { UI.toast('请输入实验组名称','warning'); return; }
 
-    const tbody = document.getElementById('create-form-tbody');
-    const formRows = tbody.querySelectorAll('tr');
-    const formulations = []; const allSampleIds = [];
-    for (const tr of formRows) {
-      const get = f => tr.querySelector(`[data-field="${f}"]`).value.trim();
-      const fn = get('formulationName');
-      if (!fn) { UI.toast('请填写处方名称','warning'); return; }
-      const components = { SPC:parseFloat(get('spc'))||0, GMO:parseFloat(get('gmo'))||0, NMP:parseFloat(get('nmp'))||0, 水:parseFloat(get('water'))||0, EtOH:parseFloat(get('etoh'))||0, 'DOPG-Na':parseFloat(get('dopg'))||0 };
-      const ft = Object.values(components).reduce((a,b)=>a+b,0);
-      const st = get('samples');
-      const sids = st.split(/[,，\s、]+/).filter(s=>s.length>0);
-      if (sids.length===0) { UI.toast(`处方"${fn}"的对应样品不能为空`,'warning'); return; }
-      formulations.push({name:fn,components,total:ft,samples:sids});
-      allSampleIds.push(...sids);
-    }
-    const totalDrug = allSampleIds.length > 0 ? drugAmount / allSampleIds.length : 0;
-    const data = { experimentName:name, date, totalDrug, drugAmount, drugConc, groupName:name, formulations };
+    const collected = _collectFormRows();
+    if (!collected) return;
+
+    const data = {
+      experimentName: name,
+      date,
+      groupName: name,
+      formulations: collected.formulations,
+      rows: collected.rows,
+      templateId: _currentCreateTemplate ? _currentCreateTemplate.id : '',
+      drugAmount: collected.rows.reduce((s, r) => s + (r.drugAmount || 0), 0),
+      drugConc: collected.rows.reduce((s, r) => s + (r.drugConc || 0), 0) / collected.rows.length,
+    };
+
     ExperimentData.updateExperiment(groupId, data);
     UI.hideModal();
     UI.toast(`已更新「${name}」`, 'success');
 
-    // 如果当前卡片视图显示的是这个组，重新渲染
     if (currentExperimentId === groupId) {
       const container = document.getElementById('app-content');
       if (container) render(container, { name }, groupId);
@@ -843,9 +1162,10 @@ const ExperimentCards = (() => {
     showCreateDialog,
     createExperiment,
     updateExperiment,
-    updateFormTotal,
-    updateDrugLoading,
     addFormRow,
-    removeLastFormRow
+    removeLastFormRow,
+    onCellChange,
+    onConcModeChange,
+    onTemplateChange
   };
 })();

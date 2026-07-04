@@ -1,5 +1,5 @@
 /* ========================================
-   app.js — 应用入口、路由、状态管理（EdgeOne 版）
+   app.js — 应用入口、路由、状态管理
    页面渲染、上传处理、实验管理
    ======================================== */
 
@@ -7,73 +7,179 @@ const App = (() => {
   let currentPage = 'dashboard';
   let experimentsCache = [];
   let initialized = false;
+  let isLocalhost = false; // 是否通过 localhost 访问
   let _parsedFiles = {}; // 缓存解析结果，供保存到实验时使用
   let _lastUploadFileName = '';
+  let fsAccessSupported = false; // 是否支持 File System Access API
 
-  // --- 启动流程（EdgeOne 版） ---
+  // --- 调试日志 ---
+  function debugLog(msg) {
+    console.log('[Fasudil-LLC]', msg);
+    const el = document.getElementById('setup-debug');
+    if (el) {
+      el.style.display = 'block';
+      el.innerHTML += msg + '<br>';
+    }
+  }
+
+  // --- 启动流程 ---
   async function init() {
-    console.log('[Fasudil-LLC] App.init()');
+    debugLog('App.init() 启动');
 
-    // 1. 检查登录状态
-    try {
-      const res = await fetch('/api/auth/me');
-      if (res.ok) {
-        const data = await res.json();
-        console.log('[Fasudil-LLC] 已登录:', data.user?.email);
-        // 已登录 → 进入主应用
+    // 检测协议和 API 支持
+    isLocalhost = window.location.protocol === 'http:' || window.location.protocol === 'https:';
+    fsAccessSupported = typeof window.showDirectoryPicker === 'function';
+
+    debugLog(`协议: ${window.location.protocol}, localhost: ${isLocalhost}, FSA: ${fsAccessSupported}`);
+
+    // 非 localhost 访问提示
+    if (!isLocalhost) {
+      const warning = document.getElementById('setup-protocol-warning');
+      if (warning) warning.style.display = 'flex';
+    }
+
+    // 绑定按钮事件（不用 onclick 属性，更健壮）
+    bindSetupButtons();
+
+    if (!fsAccessSupported) {
+      debugLog('showDirectoryPicker 不可用，显示提示');
+      showSetupError('当前浏览器不支持 File System Access API。请通过 localhost 启动（双击 start.command），或使用最新版 Edge/Chrome。');
+      return;
+    }
+
+    // 尝试恢复已授权的目录
+    const result = await FSManager.initDirectory();
+    debugLog(`initDirectory 结果: needsSelect=${result.needsSelect}, needsReauth=${result.needsReauth}`);
+
+    if (result.needsSelect) {
+      showSetupStep('step1');
+    } else if (result.needsReauth) {
+      showSetupStep('step2');
+    } else {
+      await enterMainApp();
+    }
+  }
+
+  // --- 绑定引导页按钮 ---
+  function bindSetupButtons() {
+    const btnSelect = document.getElementById('btn-select-dir');
+    const btnReauth = document.getElementById('btn-reauth-dir');
+    const btnSelectNew = document.getElementById('btn-select-new');
+    const btnRetry = document.getElementById('btn-retry');
+
+    if (btnSelect) btnSelect.addEventListener('click', () => setup.selectDirectory());
+    if (btnReauth) btnReauth.addEventListener('click', () => setup.reauthDirectory());
+    if (btnSelectNew) btnSelectNew.addEventListener('click', () => setup.selectNewDirectory());
+    if (btnRetry) btnRetry.addEventListener('click', () => setup.retry());
+  }
+
+  // --- 设置页面显示控制（用 style.display 代替 class，更可控） ---
+  function showSetupStep(stepId) {
+    // 隐藏所有步骤
+    ['setup-step1', 'setup-step2', 'setup-status', 'setup-error'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    });
+    // 显示目标步骤
+    const target = document.getElementById('setup-' + stepId);
+    if (target) target.style.display = 'block';
+  }
+
+  function showSetupStatus(msg) {
+    ['setup-step1', 'setup-step2', 'setup-error'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    });
+    const statusEl = document.getElementById('setup-status');
+    const msgEl = document.getElementById('setup-status-msg');
+    if (statusEl) statusEl.style.display = 'flex';
+    if (msgEl) msgEl.textContent = msg || '正在处理...';
+  }
+
+  function showSetupError(msg) {
+    ['setup-step1', 'setup-step2', 'setup-status'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    });
+    const errorEl = document.getElementById('setup-error');
+    const msgEl = document.getElementById('setup-error-msg');
+    if (errorEl) errorEl.style.display = 'block';
+    if (msgEl) msgEl.textContent = msg;
+  }
+
+  // --- 目录选择与授权 ---
+  const setup = {
+    async selectDirectory() {
+      showSetupStatus('正在选择目录...');
+      try {
+        const handle = await FSManager.selectDirectory();
+        if (!handle) { showSetupStep('step1'); return; }
         await enterMainApp();
-      } else {
-        // 未登录 → 显示登录页
-        showLoginScreen();
+      } catch (err) {
+        debugLog('selectDirectory 错误: ' + err.message);
+        showSetupError('选择目录失败: ' + err.message);
       }
-    } catch (err) {
-      console.error('[Fasudil-LLC] 登录检查失败:', err.message);
-      // 网络错误时也显示登录页
-      showLoginScreen();
+    },
+
+    async reauthDirectory() {
+      showSetupStatus('正在重新授权...');
+      try {
+        const handle = await FSManager.reauthDirectory();
+        if (!handle) { showSetupError('授权被拒绝，请点击重试或选择新目录'); return; }
+        await enterMainApp();
+      } catch (err) {
+        debugLog('reauthDirectory 错误: ' + err.message);
+        showSetupError('授权失败: ' + err.message);
+      }
+    },
+
+    async selectNewDirectory() {
+      showSetupStatus('正在选择新目录...');
+      try {
+        const handle = await FSManager.selectDirectory();
+        if (!handle) { showSetupStep('step2'); return; }
+        await enterMainApp();
+      } catch (err) {
+        showSetupError('选择目录失败: ' + err.message);
+      }
+    },
+
+    retry() {
+      if (fsAccessSupported) {
+        showSetupStep('step1');
+      } else {
+        showSetupError('当前浏览器不支持 File System Access API。请通过 localhost 启动。');
+      }
     }
-  }
+  };
 
-  /** 显示登录页 */
-  function showLoginScreen() {
-    const loginScreen = document.getElementById('login-screen');
-    const appMain = document.getElementById('app-main');
-    if (loginScreen) loginScreen.style.display = 'flex';
-    if (appMain) appMain.style.display = 'none';
-
-    const container = document.getElementById('login-form-container');
-    if (container) {
-      UI.renderLoginForm(container);
-    }
-  }
-
-  /** 进入主应用 */
   async function enterMainApp() {
+    showSetupStatus('正在初始化项目数据目录...');
     try {
+      await FSManager.ensureProjectStructure();
+      debugLog('项目结构初始化完成');
+
       // 切换到主界面
-      const loginScreen = document.getElementById('login-screen');
+      const setupScreen = document.getElementById('setup-screen');
       const appMain = document.getElementById('app-main');
-      if (loginScreen) loginScreen.style.display = 'none';
+      if (setupScreen) setupScreen.style.display = 'none';
       if (appMain) appMain.style.display = 'block';
 
+      // 更新侧边栏信息
+      const dirName = document.getElementById('sidebar-dir-name');
+      if (dirName) dirName.textContent = FSManager.getDirName();
+
       // 加载规则
-      try { await ML.loadRules(); } catch (e) { console.warn('加载规则失败:', e.message); }
+      try { await ML.loadRules(); } catch (e) { debugLog('加载规则失败: ' + e.message); }
 
       // 进入首页
       await navigate('dashboard');
       initialized = true;
-      console.log('[Fasudil-LLC] 应用初始化成功');
+      debugLog('应用初始化成功');
     } catch (err) {
-      console.error('[Fasudil-LLC] 初始化失败:', err.message);
-      UI.toast('系统初始化失败: ' + err.message, 'error', 5000);
+      debugLog('enterMainApp 错误: ' + err.message);
+      showSetupError('初始化失败: ' + err.message);
     }
-  }
-
-  /** 退出登录 */
-  async function logout() {
-    try {
-      await fetch('/api/auth/logout', { method: 'POST' });
-    } catch (e) { /* ignore */ }
-    window.location.href = '/';
   }
 
   // --- 路由 ---
@@ -1771,6 +1877,29 @@ const App = (() => {
 
     html += `</div>`;
 
+    // ====== 新增：实验表格模板管理 ======
+    const templates = await ExperimentData.getTemplates().catch(() => []);
+    html += `<div class="card" style="margin-bottom:20px">
+      <div class="card-title" style="display:flex;align-items:center;gap:8px">
+        <span>📋 实验表格模板管理</span>
+        <span class="tag tag-info">${templates.length} 套模板</span>
+      </div>
+      <p style="color:var(--color-text-secondary);margin-bottom:16px">自定义创建实验表格模板，配置列结构、单位、公式计算规则。新建实验时自动加载默认模板。</p>
+
+      <div id="template-list-container">
+        ${templates.length > 0
+          ? templates.map(tpl => _renderTemplateCard(tpl)).join('')
+          : '<div class="alert-card alert-info">暂无模板，点击下方按钮创建第一个模板。</div>'
+        }
+      </div>
+
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-primary" onclick="App.showCreateTemplateDialog()">+ 新建模板</button>
+        <button class="btn btn-secondary" onclick="App._resetDefaultTemplates()"
+                title="恢复到系统内置默认模板">恢复到默认</button>
+      </div>
+    </div>`;
+
     // 分析 Skill 管理部分
     html += `<div class="card" style="margin-bottom:20px">
       <div class="card-title">🔧 分析 Skill 管理</div>
@@ -1792,9 +1921,12 @@ const App = (() => {
     // 其他设置
     html += `<div class="card">
       <div class="card-title">⚙️ 其他设置</div>
-      <div style="padding:12px;border:1px solid var(--color-border-light);border-radius:8px">
-        <div style="font-weight:500;margin-bottom:4px">数据存储</div>
-        <div style="font-size:12px;color:var(--color-text-tertiary)">所有数据安全存储于云端 Turso 数据库</div>
+      <div class="form-group">
+        <label class="form-label">项目数据目录</label>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="text" class="form-input" value="${FSManager.getDirName()}" disabled>
+          <button class="btn btn-secondary btn-sm" onclick="App.changeDirectory()">更改</button>
+        </div>
       </div>
     </div>`;
 
@@ -1988,8 +2120,448 @@ const App = (() => {
 
   // --- 更改项目目录 ---
   async function changeDirectory() {
-    UI.toast('云端版本无需选择数据目录，数据自动保存到数据库', 'info');
+    try {
+      const handle = await FSManager.selectDirectory();
+      if (handle) {
+        await FSManager.ensureProjectStructure();
+        UI.toast('项目目录已更改', 'success');
+        showSettings();
+      }
+    } catch (err) {
+      UI.toast('更改目录失败: ' + err.message, 'danger');
+    }
+  }
+
+  // ================================================================
+  // 模板管理功能
+  // ================================================================
+
+  /** 渲染模板卡片 HTML */
+  function _renderTemplateCard(tpl) {
+    return `
+      <div class="template-card" style="border:1px solid var(--color-border-light);border-radius:8px;padding:12px;margin-bottom:8px;
+            ${tpl.isDefault ? 'border-color:var(--color-teal);background:var(--color-info-bg)' : ''}">
+        <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:8px">
+          <div>
+            <strong>${tpl.name}</strong>
+            ${tpl.isDefault ? '<span class="tag tag-primary" style="margin-left:6px">默认</span>' : ''}
+            ${!tpl.enabled ? '<span class="tag tag-default" style="margin-left:6px">已禁用</span>' : ''}
+            <span style="font-size:12px;color:var(--color-text-tertiary);margin-left:8px">
+              ${(tpl.columns||[]).length} 列${tpl.description ? ' · ' + tpl.description : ''}
+            </span>
+          </div>
+          <div style="display:flex;gap:4px">
+            <button class="btn btn-sm btn-secondary" onclick="App._editTemplate('${tpl.id}')">编辑</button>
+            <button class="btn btn-sm btn-secondary" onclick="App._duplicateTemplate('${tpl.id}')">复制</button>
+            ${!tpl.isDefault
+              ? `<button class="btn btn-sm btn-secondary" onclick="App._setDefaultTemplate('${tpl.id}')">设默认</button>
+                 <button class="btn btn-sm btn-danger" onclick="App._deleteTemplate('${tpl.id}')">删除</button>`
+              : '<span style="font-size:11px;color:var(--color-text-tertiary)">默认模板</span>'
+            }
+            <button class="btn btn-sm btn-secondary" onclick="App._showAIGenerateFormulaDialog('${tpl.id}')">🤖 AI</button>
+          </div>
+        </div>
+        <div style="font-size:12px;color:var(--color-text-tertiary);overflow-x:auto;white-space:nowrap">
+          ${(tpl.columns||[]).map(c => `<span style="display:inline-block;padding:2px 6px;margin-right:4px;
+            border:1px solid var(--color-border);border-radius:4px;background:var(--color-bg-primary)">
+            ${c.label}${c.unit ? '('+c.unit+')' : ''}${c.type === 'computed' ? ' ⚡' : ''}
+          </span>`).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  /** 新建模板 */
+  async function showCreateTemplateDialog() {
+    const newTpl = {
+      id: 'tpl-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+      name: '',
+      description: '',
+      isDefault: false,
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      columns: _getDefaultColumns(),
+    };
+    _editTemplate(newTpl);
+  }
+
+  /** 获取默认列配置 */
+  function _getDefaultColumns() {
+    return [
+      { id:'formulationName', label:'处方名称',     type:'text',    width:'90px',  order:0, default:'' },
+      { id:'spc',   label:'SPC',    type:'number', unit:'g',  width:'65px', order:1, default:0 },
+      { id:'gmo',   label:'GMO',    type:'number', unit:'g',  width:'65px', order:2, default:0 },
+      { id:'nmp',   label:'NMP',    type:'number', unit:'g',  width:'65px', order:3, default:0 },
+      { id:'water', label:'水',      type:'number', unit:'g',  width:'55px', order:4, default:0 },
+      { id:'etoh',  label:'EtOH',   type:'number', unit:'g',  width:'65px', order:5, default:0 },
+      { id:'dopg',  label:'DOPG-Na',type:'number', unit:'g',  width:'75px', order:6, default:0 },
+      { id:'rowTotal',  label:'本行总重', type:'computed', width:'65px', order:7, formula:'spc+gmo+nmp+water+etoh+dopg' },
+      { id:'drugAmount', label:'本行加入药量', type:'number', unit:'mg', width:'85px', order:8, default:0 },
+      { id:'drugConc',   label:'本行载药浓度', type:'dynamic', width:'95px', order:9,
+        modes:[{ id:'manual', label:'手动输入' }, { id:'formula', label:'公式计算' }], defaultMode:'manual' },
+      { id:'samples', label:'对应样品', type:'text', width:'115px', order:10, default:'' },
+    ];
+  }
+
+  /** 编辑模板 */
+  async function _editTemplate(tplId) {
+    const templates = await ExperimentData.getTemplates().catch(() => []);
+    const tpl = tplId ? templates.find(t => t.id === tplId) : null;
+    const isNew = !tpl;
+    const data = tpl ? JSON.parse(JSON.stringify(tpl)) : {
+      id: 'tpl-' + Date.now() + '-' + Math.random().toString(36).slice(2,6),
+      name: '', description: '', isDefault: false, enabled: true,
+      createdAt: new Date().toISOString(), columns: _getDefaultColumns()
+    };
+
+    // 列编辑器
+    let colsHtml = data.columns.map((col, i) => `
+      <div class="tpl-column-row" data-index="${i}"
+        style="display:flex;gap:8px;align-items:center;padding:8px;border:1px solid var(--color-border-light);
+               border-radius:6px;margin-bottom:6px;background:var(--color-bg-primary)">
+        <span style="cursor:grab;color:var(--color-text-tertiary)">⠿</span>
+        <input class="form-input" data-edit="label" value="${col.label}" placeholder="列名" style="width:80px">
+        <select class="form-input" data-edit="type" onchange="App._onColumnEditTypeChange(this,${i})" style="width:90px">
+          <option value="text" ${col.type==='text'?'selected':''}>文本</option>
+          <option value="number" ${col.type==='number'?'selected':''}>数值</option>
+          <option value="computed" ${col.type==='computed'?'selected':''}>自动计算</option>
+          <option value="dynamic" ${col.type==='dynamic'?'selected':''}>动态模式</option>
+        </select>
+        <input class="form-input tpl-unit-input" data-edit="unit" value="${col.unit||''}"
+               placeholder="单位" style="width:50px;${col.type==='number'?'':'display:none'}">
+        <input class="form-input tpl-formula-input" data-edit="formula" value="${col.formula||''}"
+               placeholder="公式" style="flex:1;${col.type==='computed'?'':'display:none'}">
+        <input class="form-input" data-edit="width" value="${col.width||'80px'}" placeholder="宽度" style="width:70px">
+        <button class="btn btn-sm btn-danger" onclick="App._removeTemplateColumn(${i},this)">✕</button>
+      </div>
+    `).join('');
+
+    const body = `
+      <div>
+        <div style="display:flex;gap:12px;margin-bottom:12px">
+          <div style="flex:2">
+            <label class="form-label">模板名称 *</label>
+            <input class="form-input" id="tpl-edit-name" value="${data.name}" placeholder="如：标准脂质体处方">
+          </div>
+          <div style="flex:1">
+            <label class="form-label">设为默认</label>
+            <label class="switch" style="display:block;margin-top:4px">
+              <input type="checkbox" id="tpl-edit-default" ${data.isDefault?'checked':''}>
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+        <div class="form-group" style="margin-bottom:12px">
+          <label class="form-label">模板描述</label>
+          <input class="form-input" id="tpl-edit-desc" value="${data.description||''}" placeholder="选填">
+        </div>
+        <label class="form-label" style="display:flex;justify-content:space-between;align-items:center">
+          <span>列配置</span>
+          <button class="btn btn-sm btn-secondary" onclick="App._addTemplateColumn()">+ 新增列</button>
+        </label>
+        <div id="tpl-columns-container" style="margin-top:8px;max-height:400px;overflow-y:auto">
+          ${colsHtml}
+        </div>
+        <div style="margin-top:12px;padding:12px;background:var(--color-bg-tertiary);border-radius:8px">
+          <div style="font-weight:500;margin-bottom:8px;font-size:13px">🤖 AI 辅助</div>
+          <button class="btn btn-sm btn-secondary" onclick="App._showAIGenerateFormulaDialog('${data.id}')">AI生成公式</button>
+          <span style="font-size:12px;color:var(--color-text-tertiary);margin-left:8px">
+            根据文字描述自动生成计算列公式
+          </span>
+        </div>
+      </div>
+    `;
+
+    const footer = `
+      <button class="btn btn-secondary" onclick="UI.hideModal()">取消</button>
+      <button class="btn btn-primary" id="tpl-save-btn">保存模板</button>
+    `;
+
+    UI.showModal(isNew ? '新建模板' : '编辑模板', body, footer);
+    document.getElementById('tpl-save-btn').onclick = () => _saveTemplateFromDialog(data.id, isNew);
+  }
+
+  /** 从弹窗收集数据并保存模板 */
+  async function _saveTemplateFromDialog(tplId, isNew) {
+    const name = document.getElementById('tpl-edit-name').value.trim();
+    if (!name) { UI.toast('请输入模板名称','warning'); return; }
+    const isDefault = document.getElementById('tpl-edit-default').checked;
+    const desc = document.getElementById('tpl-edit-desc').value.trim();
+
+    // 收集列配置
+    const columnRows = document.querySelectorAll('#tpl-columns-container .tpl-column-row');
+    const columns = [];
+    columnRows.forEach((row, i) => {
+      const label = row.querySelector('[data-edit="label"]').value.trim();
+      if (!label) return;
+      const type = row.querySelector('[data-edit="type"]').value;
+      const unit = row.querySelector('[data-edit="unit"]')?.value || '';
+      const formula = row.querySelector('[data-edit="formula"]')?.value || '';
+      const width = row.querySelector('[data-edit="width"]')?.value || '80px';
+      columns.push({
+        id: 'col_' + i + '_' + label.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, ''),
+        label, type, unit, width, order: i,
+        default: type === 'number' ? 0 : '',
+        formula: type === 'computed' ? formula : undefined,
+        modes: type === 'dynamic' ? [{id:'manual',label:'手动输入'},{id:'formula',label:'公式计算'}] : undefined,
+        defaultMode: type === 'dynamic' ? 'manual' : undefined,
+      });
+    });
+
+    if (columns.length === 0) { UI.toast('至少需要一个列配置','warning'); return; }
+    if (!columns.some(c => c.id === 'samples')) {
+      UI.toast('列配置中必须包含"对应样品"列（类型: text）','warning');
+      return;
+    }
+
+    const tpl = {
+      id: tplId,
+      name, description: desc, isDefault, enabled: true,
+      columns, createdAt: isNew ? new Date().toISOString() : undefined,
+    };
+
+    // 如果设为默认，先清空其他模板的默认标记
+    if (isDefault) {
+      const allTemplates = await ExperimentData.getTemplates().catch(() => []);
+      for (const t of allTemplates) {
+        if (t.id !== tplId && t.isDefault) {
+          t.isDefault = false;
+        }
+      }
+      await ExperimentData.saveTemplates(allTemplates);
+    }
+
+    const allTemplates = await ExperimentData.getTemplates().catch(() => []);
+    const existingIdx = allTemplates.findIndex(t => t.id === tplId);
+    if (existingIdx >= 0) {
+      allTemplates[existingIdx] = tpl;
+    } else {
+      allTemplates.push(tpl);
+    }
+    await ExperimentData.saveTemplates(allTemplates);
+
+    UI.hideModal();
+    UI.toast(`模板「${name}」已保存`, 'success');
     showSettings();
+  }
+
+  /** 复制模板 */
+  async function _duplicateTemplate(tplId) {
+    const templates = await ExperimentData.getTemplates().catch(() => []);
+    const src = templates.find(t => t.id === tplId);
+    if (!src) { UI.toast('模板不存在','error'); return; }
+    const copy = JSON.parse(JSON.stringify(src));
+    copy.id = 'tpl-' + Date.now() + '-' + Math.random().toString(36).slice(2,6);
+    copy.name = src.name + ' (副本)';
+    copy.isDefault = false;
+    templates.push(copy);
+    await ExperimentData.saveTemplates(templates);
+    UI.toast('模板已复制', 'success');
+    showSettings();
+  }
+
+  /** 设为默认模板 */
+  async function _setDefaultTemplate(tplId) {
+    const templates = await ExperimentData.getTemplates().catch(() => []);
+    for (const t of templates) {
+      t.isDefault = (t.id === tplId);
+    }
+    await ExperimentData.saveTemplates(templates);
+    UI.toast('默认模板已更新', 'success');
+    showSettings();
+  }
+
+  /** 删除模板 */
+  async function _deleteTemplate(tplId) {
+    const templates = await ExperimentData.getTemplates().catch(() => []);
+    const tpl = templates.find(t => t.id === tplId);
+    if (!tpl) return;
+    if (tpl.isDefault) {
+      UI.toast('默认模板不可删除，请先设置其他模板为默认','warning');
+      return;
+    }
+    UI.confirm('删除模板', `确定要删除模板「${tpl.name}」吗？`, async () => {
+      const idx = templates.findIndex(t => t.id === tplId);
+      if (idx >= 0) {
+        templates.splice(idx, 1);
+        await ExperimentData.saveTemplates(templates);
+        UI.toast('模板已删除', 'success');
+        showSettings();
+      }
+    });
+  }
+
+  /** 添加列 */
+  function _addTemplateColumn() {
+    const container = document.getElementById('tpl-columns-container');
+    if (!container) return;
+    const i = container.children.length;
+    const div = document.createElement('div');
+    div.className = 'tpl-column-row';
+    div.style.cssText = 'display:flex;gap:8px;align-items:center;padding:8px;border:1px solid var(--color-border-light);border-radius:6px;margin-bottom:6px;background:var(--color-bg-primary)';
+    div.innerHTML = `
+      <span style="cursor:grab;color:var(--color-text-tertiary)">⠿</span>
+      <input class="form-input" data-edit="label" placeholder="列名" style="width:80px">
+      <select class="form-input" data-edit="type" style="width:90px">
+        <option value="text">文本</option>
+        <option value="number" selected>数值</option>
+        <option value="computed">自动计算</option>
+        <option value="dynamic">动态模式</option>
+      </select>
+      <input class="form-input tpl-unit-input" data-edit="unit" placeholder="单位" style="width:50px">
+      <input class="form-input tpl-formula-input" data-edit="formula" placeholder="公式" style="flex:1;display:none">
+      <input class="form-input" data-edit="width" value="80px" placeholder="宽度" style="width:70px">
+      <button class="btn btn-sm btn-danger" onclick="App._removeTemplateColumn(${i},this)">✕</button>
+    `;
+    div.querySelector('[data-edit="type"]').onchange = function() { App._onColumnEditTypeChange(this, i); };
+    container.appendChild(div);
+  }
+
+  /** 删除列 */
+  function _removeTemplateColumn(index, btn) {
+    const row = btn.closest('.tpl-column-row');
+    if (row) row.remove();
+  }
+
+  /** 列类型切换时显示/隐藏单位/公式字段 */
+  function _onColumnEditTypeChange(select, index) {
+    const row = select.closest('.tpl-column-row');
+    const unitInput = row.querySelector('.tpl-unit-input');
+    const formulaInput = row.querySelector('.tpl-formula-input');
+    const type = select.value;
+    unitInput.style.display = type === 'number' ? '' : 'none';
+    formulaInput.style.display = type === 'computed' ? '' : 'none';
+  }
+
+  /** 重置为默认模板 */
+  async function _resetDefaultTemplates() {
+    UI.confirm('重置模板', '将恢复为系统内置默认模板，已有自定义模板将被覆盖。确定继续？', async () => {
+      await ExperimentData.saveTemplates([]);
+      UI.toast('已恢复默认模板', 'success');
+      showSettings();
+    });
+  }
+
+  /** AI生成公式弹窗 */
+  function _showAIGenerateFormulaDialog(tplId) {
+    const body = `
+      <div>
+        <p style="color:var(--color-text-secondary);margin-bottom:16px;font-size:14px">
+          AI 将根据您的描述生成列计算公式。支持两种输入方式：
+        </p>
+        <div class="form-group" style="margin-bottom:16px">
+          <label class="form-label">方式A：文字描述计算逻辑</label>
+          <textarea class="form-input" id="ai-formula-desc" rows="3"
+            placeholder="例如：计算本行总重，等于SPC+GMO+NMP+水+EtOH+DOPG-Na之和"
+            style="width:100%;box-sizing:border-box;resize:vertical"></textarea>
+        </div>
+        <div style="text-align:center;margin:12px 0;color:var(--color-text-tertiary);font-size:13px">—— 或 ——</div>
+        <div class="form-group" style="margin-bottom:16px">
+          <label class="form-label">方式B：上传文档/图片（后续版本支持）</label>
+          <div style="padding:20px;border:2px dashed var(--color-border);border-radius:8px;text-align:center;
+                color:var(--color-text-tertiary);font-size:13px">
+            📄 文件上传功能开发中
+          </div>
+        </div>
+        <div id="ai-formula-result" style="display:none;margin-top:12px;padding:12px;
+              background:var(--color-bg-tertiary);border-radius:8px">
+          <label class="form-label">AI 生成的公式预览</label>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+            <code id="ai-formula-output" style="flex:1;padding:8px;background:var(--color-bg-primary);
+                  border:1px solid var(--color-border);border-radius:4px;font-size:14px"></code>
+            <button class="btn btn-sm btn-primary" onclick="App._applyGeneratedFormulaToEditor()">应用</button>
+          </div>
+        </div>
+        <button class="btn btn-primary" id="ai-generate-btn" onclick="App._callAIGenerateFormula()"
+                style="margin-top:12px;width:100%">🤖 生成公式</button>
+      </div>
+    `;
+    const footer = `<button class="btn btn-secondary" onclick="UI.hideModal()">关闭</button>`;
+    UI.showModal('AI 生成公式', body, footer);
+  }
+
+  /** 调用 AI 生成公式（使用已有 API 配置） */
+  async function _callAIGenerateFormula() {
+    const desc = document.getElementById('ai-formula-desc').value.trim();
+    if (!desc) { UI.toast('请输入计算公式的文字描述','warning'); return; }
+
+    const btn = document.getElementById('ai-generate-btn');
+    btn.disabled = true; btn.textContent = '生成中...';
+
+    try {
+      // 使用现有 AI API 代理端点
+      const res = await fetch('/api/proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetUrl: 'https://api.modelbest.co/v1/chat/completions',
+          headers: { 'Authorization': 'Bearer sk-demo' },
+          body: {
+            model: 'minicpm-v4.6',
+            messages: [
+              { role: 'system', content: '你是一个实验配方计算公式生成器。根据用户描述，生成一个 JavaScript 可执行的公式表达式。'
+                + '公式中引用表格中其他列的 ID 作为变量。只返回公式本身，不要加任何解释。'
+                + '可用的列IDs包括: spc, gmo, nmp, water, etoh, dopg。示例: spc+gmo+nmp+water+etoh+dopg' },
+              { role: 'user', content: desc }
+            ],
+            max_tokens: 100
+          }
+        })
+      });
+
+      const data = await res.json();
+      let formula = '';
+      if (data.choices && data.choices[0]) {
+        formula = data.choices[0].message.content.trim();
+        // 清理可能的代码块标记
+        formula = formula.replace(/```/g, '').replace(/javascript/g, '').trim();
+      } else {
+        // 兜底：简单的关键词匹配
+        if (desc.includes('总重') || desc.includes('求和') || desc.includes('之和')) {
+          formula = 'spc+gmo+nmp+water+etoh+dopg';
+        } else if (desc.includes('浓度') || desc.includes('药量')) {
+          formula = 'drugAmount / (rowTotal + drugAmount / 1000)';
+        }
+      }
+
+      if (formula) {
+        document.getElementById('ai-formula-output').textContent = formula;
+        document.getElementById('ai-formula-result').style.display = 'block';
+        UI.toast('公式生成成功，点击"应用"使用', 'success');
+      } else {
+        UI.toast('AI 未能生成有效公式，请重试', 'warning');
+      }
+    } catch (err) {
+      // AI 不可用时使用规则匹配
+      let formula = '';
+      if (desc.includes('总重') || desc.includes('求和') || desc.includes('之和')) {
+        formula = 'spc+gmo+nmp+water+etoh+dopg';
+      } else if (desc.includes('浓度') || desc.includes('药量')) {
+        formula = 'drugAmount / (rowTotal + drugAmount / 1000)';
+      } else {
+        UI.toast('AI 服务不可用，请稍后重试', 'warning');
+        btn.disabled = false; btn.textContent = '🤖 生成公式';
+        return;
+      }
+      document.getElementById('ai-formula-output').textContent = formula;
+      document.getElementById('ai-formula-result').style.display = 'block';
+      UI.toast('已通过规则匹配生成公式', 'info');
+    }
+
+    btn.disabled = false; btn.textContent = '🤖 生成公式';
+  }
+
+  /** 将 AI 生成的公式应用到编辑器 */
+  function _applyGeneratedFormulaToEditor() {
+    const formula = document.getElementById('ai-formula-output').textContent;
+    if (!formula) return;
+    // 尝试找到当前打开的列编辑器中的 formula 输入框并填入
+    const firstFormulaInput = document.querySelector('.tpl-formula-input:not([style*="display: none"])');
+    if (firstFormulaInput) {
+      firstFormulaInput.value = formula;
+    }
+    UI.hideModal();
+    UI.toast('公式已应用到当前列', 'success');
   }
 
   // --- AI 分析文件 ---
@@ -2248,14 +2820,14 @@ const App = (() => {
     try {
       init();
     } catch (err) {
-      console.error('启动致命错误:', err.message);
-      UI.toast('系统启动失败: ' + err.message, 'error', 5000);
+      debugLog('启动致命错误: ' + err.message);
+      showSetupError('系统启动失败: ' + err.message);
     }
   });
 
   return {
+    setup,
     navigate,
-    logout,
     showCreateExperimentDialog,
     createExperiment,
     viewExperiment,
@@ -2296,6 +2868,19 @@ const App = (() => {
     deleteApi,
     changeDirectory,
     analyzeWithAI,
-    exportZip
+    exportZip,
+    // 模板管理
+    showCreateTemplateDialog,
+    _editTemplate,
+    _duplicateTemplate,
+    _setDefaultTemplate,
+    _deleteTemplate,
+    _addTemplateColumn,
+    _removeTemplateColumn,
+    _onColumnEditTypeChange,
+    _resetDefaultTemplates,
+    _showAIGenerateFormulaDialog,
+    _callAIGenerateFormula,
+    _applyGeneratedFormulaToEditor
   };
 })();
