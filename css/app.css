@@ -60,6 +60,7 @@ body {
   background: var(--color-bg-secondary);
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;  /* 防止固定定位元素横向溢出 */
 }
 
 .hidden { display: none !important; }
@@ -236,6 +237,7 @@ body {
   left: 0;
   right: 0;
   z-index: 100;
+  overflow: hidden;  /* 阻止内部元素溢出穿透到下方内容区 */
 }
 
 .header-brand {
@@ -351,6 +353,10 @@ body {
   margin-top: var(--header-height);
   padding: 24px;
   min-height: calc(100vh - var(--header-height));
+}
+
+.app-main {
+  overflow: hidden;  /* 阻止子元素溢出到可见区域 */
 }
 
 /* ===== 页面标题 ===== */
