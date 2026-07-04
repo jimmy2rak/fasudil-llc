@@ -7,179 +7,36 @@ const App = (() => {
   let currentPage = 'dashboard';
   let experimentsCache = [];
   let initialized = false;
-  let isLocalhost = false; // 是否通过 localhost 访问
   let _parsedFiles = {}; // 缓存解析结果，供保存到实验时使用
   let _lastUploadFileName = '';
-  let fsAccessSupported = false; // 是否支持 File System Access API
 
-  // --- 调试日志 ---
-  function debugLog(msg) {
-    console.log('[Fasudil-LLC]', msg);
-    const el = document.getElementById('setup-debug');
-    if (el) {
-      el.style.display = 'block';
-      el.innerHTML += msg + '<br>';
-    }
-  }
-
-  // --- 启动流程 ---
+  // --- 启动流程（已移除引导页，直接进入主应用） ---
   async function init() {
-    debugLog('App.init() 启动');
-
-    // 检测协议和 API 支持
-    isLocalhost = window.location.protocol === 'http:' || window.location.protocol === 'https:';
-    fsAccessSupported = typeof window.showDirectoryPicker === 'function';
-
-    debugLog(`协议: ${window.location.protocol}, localhost: ${isLocalhost}, FSA: ${fsAccessSupported}`);
-
-    // 非 localhost 访问提示
-    if (!isLocalhost) {
-      const warning = document.getElementById('setup-protocol-warning');
-      if (warning) warning.style.display = 'flex';
-    }
-
-    // 绑定按钮事件（不用 onclick 属性，更健壮）
-    bindSetupButtons();
-
-    if (!fsAccessSupported) {
-      debugLog('showDirectoryPicker 不可用，显示提示');
-      showSetupError('当前浏览器不支持 File System Access API。请通过 localhost 启动（双击 start.command），或使用最新版 Edge/Chrome。');
-      return;
-    }
-
-    // 尝试恢复已授权的目录
-    const result = await FSManager.initDirectory();
-    debugLog(`initDirectory 结果: needsSelect=${result.needsSelect}, needsReauth=${result.needsReauth}`);
-
-    if (result.needsSelect) {
-      showSetupStep('step1');
-    } else if (result.needsReauth) {
-      showSetupStep('step2');
-    } else {
-      await enterMainApp();
-    }
+    console.log('[Fasudil-LLC] App.init()');
+    await enterMainApp();
   }
 
-  // --- 绑定引导页按钮 ---
-  function bindSetupButtons() {
-    const btnSelect = document.getElementById('btn-select-dir');
-    const btnReauth = document.getElementById('btn-reauth-dir');
-    const btnSelectNew = document.getElementById('btn-select-new');
-    const btnRetry = document.getElementById('btn-retry');
-
-    if (btnSelect) btnSelect.addEventListener('click', () => setup.selectDirectory());
-    if (btnReauth) btnReauth.addEventListener('click', () => setup.reauthDirectory());
-    if (btnSelectNew) btnSelectNew.addEventListener('click', () => setup.selectNewDirectory());
-    if (btnRetry) btnRetry.addEventListener('click', () => setup.retry());
-  }
-
-  // --- 设置页面显示控制（用 style.display 代替 class，更可控） ---
-  function showSetupStep(stepId) {
-    // 隐藏所有步骤
-    ['setup-step1', 'setup-step2', 'setup-status', 'setup-error'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.style.display = 'none';
-    });
-    // 显示目标步骤
-    const target = document.getElementById('setup-' + stepId);
-    if (target) target.style.display = 'block';
-  }
-
-  function showSetupStatus(msg) {
-    ['setup-step1', 'setup-step2', 'setup-error'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.style.display = 'none';
-    });
-    const statusEl = document.getElementById('setup-status');
-    const msgEl = document.getElementById('setup-status-msg');
-    if (statusEl) statusEl.style.display = 'flex';
-    if (msgEl) msgEl.textContent = msg || '正在处理...';
-  }
-
-  function showSetupError(msg) {
-    ['setup-step1', 'setup-step2', 'setup-status'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.style.display = 'none';
-    });
-    const errorEl = document.getElementById('setup-error');
-    const msgEl = document.getElementById('setup-error-msg');
-    if (errorEl) errorEl.style.display = 'block';
-    if (msgEl) msgEl.textContent = msg;
-  }
-
-  // --- 目录选择与授权 ---
-  const setup = {
-    async selectDirectory() {
-      showSetupStatus('正在选择目录...');
-      try {
-        const handle = await FSManager.selectDirectory();
-        if (!handle) { showSetupStep('step1'); return; }
-        await enterMainApp();
-      } catch (err) {
-        debugLog('selectDirectory 错误: ' + err.message);
-        showSetupError('选择目录失败: ' + err.message);
-      }
-    },
-
-    async reauthDirectory() {
-      showSetupStatus('正在重新授权...');
-      try {
-        const handle = await FSManager.reauthDirectory();
-        if (!handle) { showSetupError('授权被拒绝，请点击重试或选择新目录'); return; }
-        await enterMainApp();
-      } catch (err) {
-        debugLog('reauthDirectory 错误: ' + err.message);
-        showSetupError('授权失败: ' + err.message);
-      }
-    },
-
-    async selectNewDirectory() {
-      showSetupStatus('正在选择新目录...');
-      try {
-        const handle = await FSManager.selectDirectory();
-        if (!handle) { showSetupStep('step2'); return; }
-        await enterMainApp();
-      } catch (err) {
-        showSetupError('选择目录失败: ' + err.message);
-      }
-    },
-
-    retry() {
-      if (fsAccessSupported) {
-        showSetupStep('step1');
-      } else {
-        showSetupError('当前浏览器不支持 File System Access API。请通过 localhost 启动。');
-      }
-    }
-  };
-
+  /** 进入主应用 */
   async function enterMainApp() {
-    showSetupStatus('正在初始化项目数据目录...');
     try {
-      await FSManager.ensureProjectStructure();
-      debugLog('项目结构初始化完成');
-
-      // 切换到主界面
-      const setupScreen = document.getElementById('setup-screen');
-      const appMain = document.getElementById('app-main');
-      if (setupScreen) setupScreen.style.display = 'none';
-      if (appMain) appMain.style.display = 'block';
-
-      // 更新侧边栏信息
-      const dirName = document.getElementById('sidebar-dir-name');
-      if (dirName) dirName.textContent = FSManager.getDirName();
-
       // 加载规则
-      try { await ML.loadRules(); } catch (e) { debugLog('加载规则失败: ' + e.message); }
-
+      try { await ML.loadRules(); } catch (e) { console.warn('加载规则失败:', e.message); }
       // 进入首页
       await navigate('dashboard');
       initialized = true;
-      debugLog('应用初始化成功');
+      console.log('[Fasudil-LLC] 应用初始化成功');
     } catch (err) {
-      debugLog('enterMainApp 错误: ' + err.message);
-      showSetupError('初始化失败: ' + err.message);
+      console.error('[Fasudil-LLC] 初始化失败:', err.message);
+      UI.toast('系统初始化失败: ' + err.message, 'error', 5000);
     }
+  }
+
+  /** 退出登录（EdgeOne 部署用） */
+  async function logout() {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch (e) { /* 非 EdgeOne 环境忽略 */ }
+    window.location.href = '/';
   }
 
   // --- 路由 ---
@@ -2820,13 +2677,13 @@ const App = (() => {
     try {
       init();
     } catch (err) {
-      debugLog('启动致命错误: ' + err.message);
-      showSetupError('系统启动失败: ' + err.message);
+      console.error('启动致命错误:', err.message);
+      UI.toast('系统启动失败: ' + err.message, 'error', 5000);
     }
   });
 
   return {
-    setup,
+    logout,
     navigate,
     showCreateExperimentDialog,
     createExperiment,
