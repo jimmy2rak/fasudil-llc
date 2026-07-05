@@ -108,7 +108,7 @@ const ExperimentCards = (() => {
           <div class="sample-card-title-row">
             <div class="sample-card-badge">${sample.id}</div>
             <div class="sample-card-title">${sample.formulation || '—'}</div>
-            <span class="tag tag-teal">总药量 ${sample.totalDrug.toFixed(1)} mg</span>
+            <span class="tag tag-teal">总药量 ${(sample.expDrugAmount || sample.totalDrug).toFixed(1)} mg</span>
           </div>
           <div class="sample-card-actions-top">
             <button class="btn btn-sm btn-primary" onclick="ExperimentCards.analyzeSample('${expId}','${sample.id}')">一键分析所有数据</button>
@@ -202,7 +202,7 @@ const ExperimentCards = (() => {
                 <tr><td>最终累计释放率</td><td id="calc-final-${domId}"><strong>${(sample.finalRate||0).toFixed(2)}%</strong></td><td>${sample.id} 终点释放百分比</td></tr>
                 <tr><td>残留率</td><td id="calc-residual-${domId}"><strong>${(sample.residualRate||0).toFixed(2)}%</strong></td><td>制剂中残余药量百分比</td></tr>
                 <tr><td>总回收率</td><td id="calc-total-${domId}"><strong>${(sample.totalRecovery||0).toFixed(2)}%</strong></td><td>释放率 + 残留率</td></tr>
-                <tr><td>总药量</td><td>${sample.totalDrug.toFixed(2)} mg</td><td>理论载药量</td></tr>
+                <tr><td>总药量</td><td>${(sample.expDrugAmount || sample.totalDrug).toFixed(2)} mg</td><td>理论载药量</td></tr>
               </tbody></table>
               <div style="margin-top:8px;text-align:right;display:flex;gap:8px;justify-content:flex-end">
                 <button class="btn btn-sm btn-primary" onclick="ExperimentCards.analyzeSample('${expId}','${sample.id}')">一键分析</button>
@@ -249,7 +249,7 @@ const ExperimentCards = (() => {
     return `<div class="overview-grid">
       <div class="overview-item"><span class="overview-label">样品编号</span><span class="overview-value">${sample.id}</span></div>
       <div class="overview-item"><span class="overview-label">所属处方</span><span class="overview-value">${sample.formulation||'—'}</span></div>
-      <div class="overview-item"><span class="overview-label">总药量</span><span class="overview-value">${sample.totalDrug.toFixed(2)} mg</span></div>
+      <div class="overview-item"><span class="overview-label">总药量</span><span class="overview-value">${(sample.expDrugAmount || sample.totalDrug).toFixed(2)} mg</span></div>
       <div class="overview-item highlight"><span class="overview-label">最终累计释放率</span><span class="overview-value">${(sample.finalRate||0).toFixed(2)}%</span></div>
       <div class="overview-item highlight"><span class="overview-label">残留率</span><span class="overview-value">${(sample.residualRate||0).toFixed(2)}%</span></div>
       <div class="overview-item highlight"><span class="overview-label">总回收率</span><span class="overview-value">${(sample.totalRecovery||0).toFixed(2)}%</span></div>
@@ -366,7 +366,7 @@ const ExperimentCards = (() => {
     const sampleVol = data.length > 0 ? data[0].sampleVol : 2;
     const concs = data.map(r => CALC.concentration(r.absorbance));
     const cumRelease = CALC.cumulativeRelease(concs, totalVol, sampleVol);
-    const rates = CALC.releaseRate(cumRelease, sample.totalDrug);
+    const rates = CALC.releaseRate(cumRelease, (sample.expDrugAmount || sample.totalDrug));
     const finalRate = rates.length > 0 ? rates[rates.length - 1] : 0;
 
     // 更新表格
@@ -512,8 +512,12 @@ const ExperimentCards = (() => {
         { id:'drugAmount', label:'本行加入药量', type:'number', unit:'mg', width:'85px', order:8, default:0 },
         { id:'drugConc',   label:'本行载药浓度', type:'dynamic', width:'95px', order:9,
           modes:[{ id:'manual', label:'手动输入' }, { id:'formula', label:'公式计算' }],
-          defaultMode:'manual' },
-        { id:'samples', label:'对应样品', type:'text', width:'115px', order:10, default:'' },
+          defaultMode:'formula', defaultFormula:'drugAmount/(rowTotal*1000+drugAmount)/density' },
+        { id:'density', label:'密度', type:'number', unit:'mg/ml', width:'70px', order:10, default:0 },
+        { id:'takeVolume', label:'取用体积', type:'number', unit:'μL', width:'70px', order:11, default:0 },
+        { id:'expDrugAmount', label:'实验药量', type:'computed', width:'75px', order:12,
+          formula:'drugConc*takeVolume/1000', formulaDescription:'载药浓度×取用体积÷1000' },
+        { id:'samples', label:'对应样品', type:'text', width:'115px', order:13, default:'' },
       ]
     };
   }
@@ -559,6 +563,13 @@ const ExperimentCards = (() => {
           if (formData) {
             if (col.id === 'drugAmount') {
               numVal = formData.perRowDrugAmount !== undefined ? formData.perRowDrugAmount : 0;
+            } else if (col.id === 'density' || col.id === 'takeVolume') {
+              // 新列：密度/取用体积 — 从 _rowData 或 rowData 读取
+              if (formData._rowData && formData._rowData[col.id] !== undefined) {
+                numVal = formData._rowData[col.id];
+              } else if (formData[col.id] !== undefined) {
+                numVal = formData[col.id];
+              }
             } else if (formData.components && formData.components[col.id] !== undefined) {
               numVal = formData.components[col.id];
             } else if (formData._rowData && formData._rowData[col.id] !== undefined) {
@@ -570,11 +581,20 @@ const ExperimentCards = (() => {
             onwheel="return false" oninput="ExperimentCards.onCellChange()"></td>`;
           break;
         case 'computed':
-          html += `<td><span class="cf-total" data-field="${col.id}" data-formula="${col.formula||''}">0.00</span></td>`;
+          let computedVal = '0.00';
+          if (formData && formData._rowData && formData._rowData[col.id] !== undefined) {
+            computedVal = parseFloat(formData._rowData[col.id]).toFixed(2);
+          }
+          html += `<td><span class="cf-total" data-field="${col.id}" data-formula="${col.formula||''}"
+            style="cursor:default;user-select:none">${computedVal}</span></td>`;
           break;
         case 'dynamic':
-          const concMode = formData ? (formData.perRowDrugConcMode || 'manual') : 'manual';
+          const concMode = formData ? (formData.perRowDrugConcMode || col.defaultMode || 'manual') : (col.defaultMode || 'manual');
           const concVal = formData ? (formData.perRowDrugConc || 0) : 0;
+          // 使用列的 defaultFormula（如果配置了）
+          const formulaText = formData
+            ? (formData.perRowDrugConcFormula || col.defaultFormula || '公式待配置')
+            : (col.defaultFormula || '公式待配置');
           html += `<td><div class="cf-conc-mode">
             <select class="cf-mode-select" data-field="${col.id}-mode"
               onchange="ExperimentCards.onConcModeChange(this)">
@@ -588,7 +608,7 @@ const ExperimentCards = (() => {
               style="${concMode==='formula'?'display:none':''}">
             <span class="cf-conc-formula-text" data-field="${col.id}-formula"
               style="${concMode==='formula'?'':'display:none'};font-size:11px;color:var(--color-text-tertiary)">
-              ${formData && formData.perRowDrugConcFormula ? formData.perRowDrugConcFormula : '公式待配置'}
+              ${formulaText}
             </span>
           </div></td>`;
           break;
@@ -650,16 +670,8 @@ const ExperimentCards = (() => {
     const tbody = document.getElementById('create-form-tbody');
     if (!tbody) return;
     tbody.querySelectorAll('tr.form-row-entry').forEach(tr => {
-      // 计算所有 computed 列
-      tr.querySelectorAll('[data-formula]').forEach(el => {
-        const formula = el.dataset.formula;
-        if (formula) {
-          const result = _evaluateFormula(formula, tr);
-          el.textContent = result.toFixed(2);
-        }
-      });
-
-      // 如果载药浓度模式为 formula，自动计算
+      // 第一步：先计算载药浓度公式（如果为 formula 模式）
+      // 这样 expDrugAmount 公式能读取到最新计算的 drugConc 值
       const modeEl = tr.querySelector('[data-field="drugConc-mode"]');
       if (modeEl && modeEl.value === 'formula') {
         const concInput = tr.querySelector('[data-field="drugConc"]');
@@ -672,6 +684,23 @@ const ExperimentCards = (() => {
           }
         }
       }
+
+      // 第二步：计算所有 computed 列（包括 expDrugAmount）
+      // expDrugAmount 公式 drugConc*takeVolume/1000 会读取最新的 drugConc 值
+      tr.querySelectorAll('[data-formula]').forEach(el => {
+        const formula = el.dataset.formula;
+        if (formula) {
+          const result = _evaluateFormula(formula, tr);
+          el.textContent = result.toFixed(2);
+        }
+      });
+
+      // 第三步：对空值/NaN 容错处理
+      // 所有 computed 列如果为 NaN 显示 0.00
+      tr.querySelectorAll('[data-formula]').forEach(el => {
+        const val = parseFloat(el.textContent);
+        if (isNaN(val)) el.textContent = '0.00';
+      });
     });
   }
 
@@ -875,6 +904,8 @@ const ExperimentCards = (() => {
           rowData[col.id] = isNaN(concVal) ? 0 : concVal;
           rowData[col.id + '_mode'] = mode;
           rowData[col.id + '_formula'] = formulaEl ? formulaEl.textContent.trim() : '';
+        } else if (col.type === 'text') {
+          rowData[col.id] = getVal(col.id) || '';
         }
       });
 
@@ -891,6 +922,9 @@ const ExperimentCards = (() => {
       const rowDrugConc = rowData.drugConc || 0;
       const concMode = rowData.drugConc_mode || 'manual';
       const concFormula = rowData.drugConc_formula || '';
+      const rowDensity = rowData.density || 0;
+      const rowTakeVolume = rowData.takeVolume || 0;
+      const rowExpDrugAmount = rowData.expDrugAmount || 0;
 
       formulations.push({
         name: fn,
@@ -901,12 +935,18 @@ const ExperimentCards = (() => {
         perRowDrugConc: rowDrugConc,
         perRowDrugConcMode: concMode,
         perRowDrugConcFormula: concFormula,
+        perRowDensity: rowDensity,
+        perRowTakeVolume: rowTakeVolume,
+        perRowExpDrugAmount: rowExpDrugAmount,
       });
       rows.push({
         drugAmount: rowDrugAmount,
         drugConc: rowDrugConc,
         drugConcMode: concMode,
         drugConcFormula: concFormula,
+        density: rowDensity,
+        takeVolume: rowTakeVolume,
+        expDrugAmount: rowExpDrugAmount,
         _values: rowData,
       });
     }

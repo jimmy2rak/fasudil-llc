@@ -72,10 +72,12 @@ const ExperimentData = (() => {
 
       const rowConcMode = rowData.drugConcMode || data.drugConcMode || 'manual';
 
-      // 将该行的药量均分到对应样品
-      const sampleCount = (f.samples || []).length;
-      const perSampleDrug = sampleCount > 0 ? rowDrugAmount / sampleCount : 0;
+      // 新增字段兼容兜底
+      const rowDensity = parseFloat(rowData.density) || 0;
+      const rowTakeVolume = parseFloat(rowData.takeVolume) || 0;
+      const rowExpDrugAmount = parseFloat(rowData.expDrugAmount) || 0;
 
+      // 【修复】取消自动平分：每个样品使用完整实验药量，不再均分
       for (const sid of (f.samples || [])) {
         const sample = {
           id: sid,
@@ -83,7 +85,11 @@ const ExperimentData = (() => {
           formulation: f.name,
           formulationComponents: f.components,
           formulationTotal: f.total,
-          totalDrug: perSampleDrug,
+          // 【修复】使用实验药量(mg)作为单个样品总药量基数，不再使用均分的 perSampleDrug
+          totalDrug: rowExpDrugAmount > 0 ? rowExpDrugAmount : rowDrugAmount,
+          density: rowDensity,
+          takeVolume: rowTakeVolume,
+          expDrugAmount: rowExpDrugAmount,
           group: data.groupName || data.experimentName || '',
           timePoints: [],
           absorbance: [],
@@ -106,6 +112,9 @@ const ExperimentData = (() => {
       f.perRowDrugConc = rowDrugConc;
       f.perRowDrugConcMode = rowConcMode;
       if (rowData.drugConcFormula) f.perRowDrugConcFormula = rowData.drugConcFormula;
+      f.perRowDensity = rowDensity;
+      f.perRowTakeVolume = rowTakeVolume;
+      f.perRowExpDrugAmount = rowExpDrugAmount;
       if (rowData._values) f._rowData = rowData._values;
     }
 
@@ -145,9 +154,13 @@ const ExperimentData = (() => {
       const rowDrugAmount = rowData.drugAmount !== undefined
         ? parseFloat(rowData.drugAmount) || 0
         : (parseFloat(data.totalDrug) || 0) * (f.samples || []).length;
-      const sampleCount = (f.samples || []).length;
-      const perSampleDrug = sampleCount > 0 ? rowDrugAmount / sampleCount : 0;
 
+      // 新增字段兼容兜底
+      const rowExpDrugAmount = parseFloat(rowData.expDrugAmount) || 0;
+      const rowDensity = parseFloat(rowData.density) || 0;
+      const rowTakeVolume = parseFloat(rowData.takeVolume) || 0;
+
+      // 【修复】取消自动平分：每个样品使用完整实验药量
       for (const sid of (f.samples || [])) {
         const sample = {
           id: sid,
@@ -155,7 +168,11 @@ const ExperimentData = (() => {
           formulation: f.name,
           formulationComponents: f.components,
           formulationTotal: f.total,
-          totalDrug: perSampleDrug,
+          // 【修复】使用实验药量作为单样品总药量基数
+          totalDrug: rowExpDrugAmount > 0 ? rowExpDrugAmount : rowDrugAmount,
+          density: rowDensity,
+          takeVolume: rowTakeVolume,
+          expDrugAmount: rowExpDrugAmount,
           group: data.groupName || data.experimentName || '',
           timePoints: [],
           absorbance: [],
@@ -182,6 +199,9 @@ const ExperimentData = (() => {
         : (parseFloat(data.drugConc) || 0);
       f.perRowDrugConcMode = rowData.drugConcMode || data.drugConcMode || 'manual';
       if (rowData.drugConcFormula) f.perRowDrugConcFormula = rowData.drugConcFormula;
+      f.perRowDensity = rowDensity;
+      f.perRowTakeVolume = rowTakeVolume;
+      f.perRowExpDrugAmount = rowExpDrugAmount;
       if (rowData._values) f._rowData = rowData._values;
     }
 
@@ -275,8 +295,9 @@ const ExperimentData = (() => {
    * @param {number} drugConc - 本行载药浓度(mg/ml)
    * @param {string} concMode - 'manual' 或 'formula'
    * @param {string} concFormula - 自定义公式（可选）
+   * @param {object} extraData - 额外字段 { density, takeVolume, expDrugAmount }
    */
-  function updateRowDrugData(experimentId, rowIndex, drugAmount, drugConc, concMode, concFormula) {
+  function updateRowDrugData(experimentId, rowIndex, drugAmount, drugConc, concMode, concFormula, extraData) {
     const group = _userExperiments.find(e => e.id === experimentId);
     if (!group) return;
     const formulation = group.formulations[rowIndex];
@@ -287,13 +308,22 @@ const ExperimentData = (() => {
     formulation.perRowDrugConcMode = concMode;
     if (concFormula) formulation.perRowDrugConcFormula = concFormula;
 
-    // 更新关联样品的 totalDrug
-    const sampleCount = formulation.samples.length;
-    if (sampleCount > 0) {
-      const perSample = drugAmount / sampleCount;
-      for (const sample of group.samples) {
-        if (sample.formulation === formulation.name) {
-          sample.totalDrug = perSample;
+    // 存储新增列字段
+    if (extraData) {
+      if (extraData.density !== undefined) formulation.perRowDensity = extraData.density;
+      if (extraData.takeVolume !== undefined) formulation.perRowTakeVolume = extraData.takeVolume;
+      if (extraData.expDrugAmount !== undefined) formulation.perRowExpDrugAmount = extraData.expDrugAmount;
+    }
+
+    // 更新关联样品的 totalDrug（使用实验药量，不复数均分）
+    const expDrug = formulation.perRowExpDrugAmount || drugAmount;
+    for (const sample of group.samples) {
+      if (sample.formulation === formulation.name) {
+        sample.totalDrug = expDrug;
+        if (extraData) {
+          if (extraData.density !== undefined) sample.density = extraData.density;
+          if (extraData.takeVolume !== undefined) sample.takeVolume = extraData.takeVolume;
+          if (extraData.expDrugAmount !== undefined) sample.expDrugAmount = extraData.expDrugAmount;
         }
       }
     }
