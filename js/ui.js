@@ -393,6 +393,183 @@ const UI = (() => {
     if (panel) panel.remove();
   }
 
+  // ============================================================
+  // 登录表单渲染（邮箱 + OTP 验证码登录）
+  // ============================================================
+
+  /**
+   * 渲染登录表单到指定容器
+   * @param {HTMLElement} container - #login-form-container 元素
+   */
+  function renderLoginForm(container) {
+    container.innerHTML = `
+      <div class="login-field">
+        <label for="login-email">邮箱地址</label>
+        <input type="email" class="form-input" id="login-email"
+          placeholder="请输入您的邮箱" autocomplete="email" autofocus>
+      </div>
+
+      <div class="login-field">
+        <label for="login-otp">验证码</label>
+        <div class="login-input-group">
+          <input type="text" class="form-input" id="login-otp"
+            placeholder="输入 6 位验证码" maxlength="6" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code">
+          <button class="btn btn-secondary" id="login-send-otp-btn" type="button">发送验证码</button>
+        </div>
+      </div>
+
+      <button class="btn btn-primary login-btn" id="login-submit-btn" type="button">
+        <span id="login-btn-text">登 录</span>
+        <span id="login-btn-spinner" class="spinner" style="display:none;width:16px;height:16px;border-width:2px;margin:0 auto"></span>
+      </button>
+
+      <div id="login-error-msg" class="login-error"></div>
+      <div class="login-hint">验证码将发送至您的邮箱，有效期 5 分钟</div>
+    `;
+
+    // --- 状态变量 ---
+    let email = '';
+    let countdown = 0;
+    let countdownTimer = null;
+
+    const emailInput = container.querySelector('#login-email');
+    const otpInput = container.querySelector('#login-otp');
+    const sendBtn = container.querySelector('#login-send-otp-btn');
+    const submitBtn = container.querySelector('#login-submit-btn');
+    const errorEl = container.querySelector('#login-error-msg');
+    const btnText = container.querySelector('#login-btn-text');
+    const btnSpinner = container.querySelector('#login-btn-spinner');
+
+    // --- 工具函数 ---
+
+    function showError(msg) {
+      errorEl.textContent = msg;
+      errorEl.classList.add('visible');
+    }
+
+    function hideError() {
+      errorEl.classList.remove('visible');
+      errorEl.textContent = '';
+    }
+
+    function setLoading(loading) {
+      if (loading) {
+        btnText.style.display = 'none';
+        btnSpinner.style.display = 'block';
+        submitBtn.disabled = true;
+      } else {
+        btnText.style.display = 'inline';
+        btnSpinner.style.display = 'none';
+        submitBtn.disabled = false;
+      }
+    }
+
+    function startCountdown(seconds) {
+      countdown = seconds;
+      sendBtn.disabled = true;
+      if (countdownTimer) clearInterval(countdownTimer);
+      countdownTimer = setInterval(() => {
+        countdown--;
+        if (countdown <= 0) {
+          clearInterval(countdownTimer);
+          countdownTimer = null;
+          sendBtn.disabled = false;
+          sendBtn.textContent = '重新发送';
+        } else {
+          sendBtn.textContent = `${countdown}s 后重发`;
+        }
+      }, 1000);
+    }
+
+    // --- 发送验证码 ---
+
+    sendBtn.addEventListener('click', async () => {
+      hideError();
+      const val = emailInput.value.trim();
+      if (!val || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
+        showError('请输入有效的邮箱地址');
+        emailInput.focus();
+        return;
+      }
+      email = val;
+
+      sendBtn.disabled = true;
+      sendBtn.textContent = '发送中...';
+
+      try {
+        const res = await fetch('/api/auth/otp/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' },
+          body: JSON.stringify({ email })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          startCountdown(60);
+          otpInput.focus();
+        } else {
+          sendBtn.disabled = false;
+          sendBtn.textContent = '重新发送';
+          showError(data.error || '验证码发送失败，请稍后重试');
+        }
+      } catch (err) {
+        sendBtn.disabled = false;
+        sendBtn.textContent = '重新发送';
+        showError('网络错误，请检查连接后重试');
+      }
+    });
+
+    // --- 登录（验证 OTP） ---
+
+    submitBtn.addEventListener('click', async () => {
+      hideError();
+      const e = emailInput.value.trim();
+      const otp = otpInput.value.trim();
+
+      if (!e || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) {
+        showError('请输入有效的邮箱地址');
+        emailInput.focus();
+        return;
+      }
+      if (!otp || otp.length < 4) {
+        showError('请输入验证码');
+        otpInput.focus();
+        return;
+      }
+      email = e;
+
+      setLoading(true);
+      try {
+        const res = await fetch('/api/auth/otp/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' },
+          body: JSON.stringify({ email, otp })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          // 登录成功 → 刷新页面，init() 会读取 cookie 进入主应用
+          window.location.reload();
+        } else {
+          setLoading(false);
+          showError(data.error || '验证失败，请检查验证码');
+        }
+      } catch (err) {
+        setLoading(false);
+        showError('网络错误，请检查连接后重试');
+      }
+    });
+
+    // 回车键快捷操作
+    otpInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submitBtn.click();
+    });
+    emailInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') sendBtn.click();
+    });
+
+    // 自动聚焦邮箱
+    setTimeout(() => emailInput.focus(), 100);
+  }
+
   // --- 空状态 ---
   function renderEmptyState(title, desc, actionLabel, actionFn) {
     return `<div class="empty-state">
@@ -429,6 +606,7 @@ const UI = (() => {
     renderImageGallery,
     renderTimeline,
     renderEmptyState,
+    renderLoginForm,
     formatCell
   };
 })();

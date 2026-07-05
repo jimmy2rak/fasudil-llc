@@ -79,36 +79,185 @@ const App = (() => {
   async function init() {
     console.log('[Fasudil-LLC] App.init()');
 
+    // 第一步：快速检查本地是否有 auth_token cookie（硬跳转跳过异步请求）
+    // 这样可以避免无 token 时白白请求 /api/auth/me
+    const hasCookie = document.cookie.split(';').some(c => c.trim().startsWith('auth_token='));
+
+    if (!hasCookie) {
+      console.log('[Fasudil-LLC] 无本地 token，直接显示登录页');
+      safeShowLoginScreen();
+      return;
+    }
+
+    // 第二步：有 token 才调用鉴权接口验证有效性
     try {
       const res = await fetch('/api/auth/me', {
         credentials: 'same-origin',
-        headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache'
+        }
       });
 
       if (res.ok) {
         // 已登录 → 进入主应用
+        console.log('[Fasudil-LLC] 鉴权通过，进入主应用');
         await enterMainApp();
       } else {
-        // 未登录 → 显示登录页
-        showLoginScreen();
+        // token 过期或无效 → 清除后显示登录页
+        console.warn('[Fasudil-LLC] 鉴权失败（' + res.status + '），清除凭证');
+        forceLogout();
+        // forceLogout 会 window.location.replace('/')，页面会刷新
       }
     } catch (err) {
       console.error('[Fasudil-LLC] 登录检查失败:', err.message);
-      showLoginScreen();
+      safeShowLoginScreen();
     }
   }
 
-  /** 显示登录页 */
-  function showLoginScreen() {
-    const loginScreen = document.getElementById('login-screen');
-    const appMain = document.getElementById('app-main');
-    if (loginScreen) loginScreen.style.display = 'flex';
-    if (appMain) appMain.style.display = 'none';
+  /**
+   * 安全的登录页渲染（含完整容错，防止任何异常阻塞页面）
+   */
+  function safeShowLoginScreen() {
+    // 确保第一个 try/catch 包裹全部逻辑，防止任何未捕获错误
+    try {
+      const loginScreen = document.getElementById('login-screen');
+      const appMain = document.getElementById('app-main');
 
-    const container = document.getElementById('login-form-container');
-    if (container) {
-      UI.renderLoginForm(container);
+      // 隐藏主应用
+      if (appMain) appMain.style.display = 'none';
+      // 显示登录页
+      if (loginScreen) loginScreen.style.display = 'flex';
+
+      // 渲染登录表单
+      const container = document.getElementById('login-form-container');
+      if (!container) {
+        console.warn('[SafeLogin] #login-form-container 元素不存在');
+        return;
+      }
+
+      // 检查 UI.renderLoginForm 是否存在并合法
+      if (typeof UI.renderLoginForm === 'function') {
+        try {
+          UI.renderLoginForm(container);
+        } catch (renderErr) {
+          console.error('[SafeLogin] renderLoginForm 执行异常:', renderErr);
+          fallbackRenderLogin(container);
+        }
+      } else {
+        console.warn('[SafeLogin] UI.renderLoginForm 未定义，使用兜底渲染');
+        fallbackRenderLogin(container);
+      }
+    } catch (outerErr) {
+      console.error('[SafeLogin] 登录页渲染严重错误:', outerErr);
+      // 终极兜底：最简单的方式显示登录入口
+      document.body.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f0f4f8;font-family:sans-serif">
+          <div style="background:#fff;padding:40px 36px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,0.12);width:360px;text-align:center">
+            <h1 style="font-size:22px;color:#1e3a5f;margin-bottom:6px">Fasudil-LLC Analyzer</h1>
+            <p style="font-size:12px;color:#8c94a6;margin-bottom:28px">盐酸法舒地尔缓释制剂 · 数据分析系统</p>
+            <p style="font-size:14px;color:#e74c3c;margin-bottom:16px">系统加载异常，请刷新页面重试</p>
+            <button onclick="location.reload()" style="padding:10px 24px;background:#0d7377;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer">刷新页面</button>
+          </div>
+        </div>
+      `;
     }
+  }
+
+  /**
+   * 兜底登录表单渲染（当 UI.renderLoginForm 不可用时）
+   */
+  function fallbackRenderLogin(container) {
+    container.innerHTML = `
+      <div class="login-field">
+        <label for="fb-email">邮箱地址</label>
+        <input type="email" class="form-input" id="fb-email" placeholder="请输入邮箱" autocomplete="email">
+      </div>
+      <div class="login-field">
+        <label for="fb-otp">验证码</label>
+        <div class="login-input-group">
+          <input type="text" class="form-input" id="fb-otp" placeholder="6 位验证码" maxlength="6">
+          <button class="btn btn-secondary" id="fb-send-btn">发送验证码</button>
+        </div>
+      </div>
+      <button class="btn btn-primary login-btn" id="fb-login-btn">登 录</button>
+      <div id="fb-error" class="login-error"></div>
+      <div class="login-hint">验证码将发送至您的邮箱，有效期 5 分钟</div>
+    `;
+
+    // 发送验证码
+    document.getElementById('fb-send-btn').addEventListener('click', async function() {
+      const email = document.getElementById('fb-email').value.trim();
+      if (!email || !email.includes('@')) {
+        const errEl = document.getElementById('fb-error');
+        errEl.textContent = '请输入有效邮箱';
+        errEl.classList.add('visible');
+        return;
+      }
+      this.disabled = true;
+      this.textContent = '发送中...';
+      try {
+        const r = await fetch('/api/auth/otp/send', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email })
+        });
+        const d = await r.json();
+        if (r.ok && d.success) {
+          let c = 60;
+          this.textContent = c + 's';
+          const t = setInterval(() => {
+            c--; this.textContent = c + 's';
+            if (c <= 0) { clearInterval(t); this.disabled = false; this.textContent = '重新发送'; }
+          }, 1000);
+          document.getElementById('fb-otp').focus();
+        } else {
+          this.disabled = false; this.textContent = '重新发送';
+          document.getElementById('fb-error').textContent = d.error || '发送失败';
+          document.getElementById('fb-error').classList.add('visible');
+        }
+      } catch(e) {
+        this.disabled = false; this.textContent = '重新发送';
+        document.getElementById('fb-error').textContent = '网络错误';
+        document.getElementById('fb-error').classList.add('visible');
+      }
+    });
+
+    // 登录
+    document.getElementById('fb-login-btn').addEventListener('click', async function() {
+      const email = document.getElementById('fb-email').value.trim();
+      const otp = document.getElementById('fb-otp').value.trim();
+      if (!otp) {
+        document.getElementById('fb-error').textContent = '请输入验证码';
+        document.getElementById('fb-error').classList.add('visible');
+        return;
+      }
+      this.disabled = true;
+      this.textContent = '登录中...';
+      try {
+        const r = await fetch('/api/auth/otp/verify', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, otp })
+        });
+        const d = await r.json();
+        if (r.ok && d.success) {
+          window.location.reload();
+        } else {
+          document.getElementById('fb-error').textContent = d.error || '验证失败';
+          document.getElementById('fb-error').classList.add('visible');
+          this.disabled = false; this.textContent = '登 录';
+        }
+      } catch(e) {
+        document.getElementById('fb-error').textContent = '网络错误';
+        document.getElementById('fb-error').classList.add('visible');
+        this.disabled = false; this.textContent = '登 录';
+      }
+    });
+  }
+
+  /** @deprecated 保留旧函数名作为兼容垫片，实际使用 safeShowLoginScreen */
+  function showLoginScreen() {
+    console.warn('[App] showLoginScreen 已废弃，建议直接使用 safeShowLoginScreen');
+    safeShowLoginScreen();
   }
 
   /** 进入主应用 */
@@ -2794,12 +2943,38 @@ const App = (() => {
 
   // --- 启动 ---
   document.addEventListener('DOMContentLoaded', () => {
-    try {
-      init();
-    } catch (err) {
-      console.error('启动致命错误:', err.message);
-      UI.toast('系统启动失败: ' + err.message, 'error', 5000);
-    }
+    // 全局未捕获 Promise 异常处理（防止单个函数崩溃阻塞整个页面）
+    window.addEventListener('unhandledrejection', (event) => {
+      console.error('[Global] 未捕获的 Promise 异常:', event.reason?.message || event.reason);
+      event.preventDefault();
+    });
+
+    // 全局未捕获异常处理
+    window.addEventListener('error', (event) => {
+      console.error('[Global] 未捕获的异常:', event.message, 'at', event.filename + ':' + event.lineno);
+      // 如果是 JS 函数不存在等致命错误，尝试恢复显示登录页
+      if (event.message && (
+        event.message.includes('is not a function') ||
+        event.message.includes('is not defined') ||
+        event.message.includes('Cannot read properties')
+      )) {
+        try {
+          const container = document.getElementById('login-form-container');
+          if (container && !container.hasChildNodes()) {
+            safeShowLoginScreen();
+          }
+        } catch (e) {}
+      }
+    });
+
+    // 异步启动（确保任何未捕获错误不会阻塞页面）
+    init().catch(err => {
+      console.error('[Fasudil-LLC] 启动异常 (catch):', err.message);
+      // 终极兜底
+      try { safeShowLoginScreen(); } catch (e) {
+        document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:sans-serif"><p style="color:#e74c3c">系统加载失败，请刷新页面</p></div>';
+      }
+    });
   });
 
   return {
