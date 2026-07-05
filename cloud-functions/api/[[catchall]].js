@@ -165,7 +165,7 @@ async function handleDataGET(request, type, key) {
         'SELECT * FROM user_data WHERE user_id = ? AND data_type = ? AND data_key = ?',
         userId, type, key
       );
-      if (!record) return json({ error: '数据不存在' }, 404);
+      if (!record) return json({ data: null }); // 无数据返回200+null（替代404，前端不需要处理404）
       return json({ id: record.data_key, type: record.data_type, data: JSON.parse(record.value) });
     }
     const records = await queryAll(
