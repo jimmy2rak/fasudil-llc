@@ -504,6 +504,8 @@ const ExperimentCards = (() => {
   let _existingEditSamples = [];
   /** 模板是否已锁定（新建实验选择模板后锁定） */
   let _templateLocked = false;
+  /** 调试开关：true 输出日志，false 完全静默 */
+  const _DEBUG = false;
 
   /** 获取系统内置标准模板 */
   function _getBuiltinDefaultTemplate() {
@@ -579,39 +581,39 @@ const ExperimentCards = (() => {
     if (existing) existing.remove();
   }
 
+  /** 预生成样品列复选框HTML（缓存复用，避免每行重复遍历 _existingEditSamples） */
+  let _cachedSamplesCheckboxHtml = '';
+
+  function _generateSamplesCheckboxHtml(formData) {
+    // 兼容旧数据：formData.samples 可能是空格分隔字符串或数组
+    let rawSamples = formData && formData.samples ? formData.samples : [];
+    if (typeof rawSamples === 'string') {
+      rawSamples = rawSamples.split(/[,，\s、]+/).filter(Boolean);
+    }
+    const selectedSet = new Set(rawSamples);
+    let checkboxes = '<div class="sample-checkbox-group" data-field="samples">';
+    _existingEditSamples.forEach(s => {
+      const checked = selectedSet.has(s.id) ? 'checked' : '';
+      checkboxes += `<label class="sample-checkbox-label" style="display:inline-flex;align-items:center;gap:3px;margin:0 4px 2px 0;font-size:12px;cursor:pointer">
+        <input type="checkbox" class="sample-checkbox" value="${s.id}" ${checked} onchange="ExperimentCards._onSampleCheckboxChange()">
+        ${s.id}
+      </label>`;
+    });
+    checkboxes += '</div>';
+    return checkboxes;
+  }
+
   /** 根据模板列配置渲染单行（用于新建或编辑时的回填） */
-  function _renderFormRow(columns, formData) {
+  function _renderFormRow(columns, formData, samplesCheckboxHtml) {
     let html = '<tr class="form-row-entry">';
     columns.forEach(col => {
       switch(col.type) {
         case 'text':
           const txtVal = formData ? (formData.name || formData[col.id] || '') : '';
-          // ===== 【检查点2】对应样品列渲染分支判断 =====
-          if (col.id === 'samples') {
-            console.log('[样品列调试] _renderFormRow samples分支', {
-              _existingEditSamples_len: _existingEditSamples.length,
-              isCheckboxMode: _existingEditSamples.length > 0,
-              formDataSamples: formData ? formData.samples : null,
-              formDataType: formData ? typeof formData.samples : 'N/A'
-            });
-          }
           if (col.id === 'samples' && _existingEditSamples.length > 0) {
-            // 兼容旧数据：formData.samples 可能是空格分隔字符串或数组
-            let rawSamples = formData && formData.samples ? formData.samples : [];
-            if (typeof rawSamples === 'string') {
-              rawSamples = rawSamples.split(/[,，\s、]+/).filter(Boolean);
-            }
-            const selectedSet = new Set(rawSamples);
-            let checkboxes = '<div class="sample-checkbox-group" data-field="samples">';
-            _existingEditSamples.forEach(s => {
-              const checked = selectedSet.has(s.id) ? 'checked' : '';
-              checkboxes += `<label class="sample-checkbox-label" style="display:inline-flex;align-items:center;gap:3px;margin:0 4px 2px 0;font-size:12px;cursor:pointer">
-                <input type="checkbox" class="sample-checkbox" value="${s.id}" ${checked} onchange="ExperimentCards._onSampleCheckboxChange()">
-                ${s.id}
-              </label>`;
-            });
-            checkboxes += '</div>';
-            html += `<td style="min-width:150px;white-space:nowrap">${checkboxes}</td>`;
+            // 编辑模式：使用预生成的复选框HTML（避免每行重复遍历 _existingEditSamples）
+            const cbHtml = samplesCheckboxHtml || _generateSamplesCheckboxHtml(formData);
+            html += `<td style="min-width:150px;white-space:nowrap">${cbHtml}</td>`;
           } else {
             html += `<td><input class="cf-input cf-name" data-field="${col.id}" value="${txtVal}" placeholder="${col.default||''}"></td>`;
           }
@@ -814,7 +816,7 @@ const ExperimentCards = (() => {
     onCellChange();
   }
 
-  /** 显示创建/编辑实验组弹窗（改造版） */
+  /** 显示创建/编辑实验组弹窗（优化版：先弹窗、后渲染） */
   function showCreateDialog(editGroup) {
     const now = new Date().toISOString().slice(0, 10);
     const isEdit = !!editGroup;
@@ -824,97 +826,121 @@ const ExperimentCards = (() => {
     const initDate = isEdit ? (editGroup.date || now) : now;
     const initForms = isEdit ? (editGroup.formulations || []) : [];
 
-    // ===== 【检查点1】_existingEditSamples 赋值逻辑 =====
     _existingEditSamples = isEdit ? (editGroup.samples || []) : [];
-    console.log('[样品列调试] showCreateDialog', {
-      mode: isEdit ? '编辑' : '创建',
-      isEdit,
-      _existingEditSamples,
-      _existingEditSamples_len: _existingEditSamples.length,
-      editGroupSamples: editGroup ? editGroup.samples : null,
-    });
+    _templateLocked = isEdit;
+    _DEBUG && console.log('[DEBUG] showCreateDialog', { isEdit, sampleCount: _existingEditSamples.length });
 
-    // 异步加载模板后渲染弹窗
-    _templateLocked = isEdit; // 编辑模式直接锁定
-    _loadDefaultTemplate(editGroup).then(async (tpl) => {
-      _currentCreateTemplate = tpl;
-      const allData = await ExperimentData.getAllTemplates();
-      const columns = tpl.columns;
+    // 预生成编辑模式复选框HTML（仅一次）
+    _cachedSamplesCheckboxHtml = '';
+    if (_existingEditSamples.length > 0) {
+      _cachedSamplesCheckboxHtml = _generateSamplesCheckboxHtml(
+        initForms.length > 0 ? initForms[0] : null
+      );
+    }
 
-      // 渲染行数据
-      let formRowsHtml = '';
-      if (initForms.length > 0) {
-        initForms.forEach(f => {
-          formRowsHtml += _renderFormRow(columns, f);
-        });
-      } else {
-        formRowsHtml += _renderFormRow(columns, null);
+    // 第一步：立即弹出一个带加载占位的模态框（用户无等待）
+    const loadingBody = '<div style="text-align:center;padding:40px;color:var(--color-text-tertiary)"><div class="spinner"></div><p style="margin-top:16px">正在加载模板配置...</p></div>';
+    const loadingFooter = '<button class="btn btn-secondary" onclick="UI.hideModal()">取消</button>';
+    UI.showModal(title, loadingBody, loadingFooter);
+
+    // 第二步：异步加载模板数据（不阻塞弹窗弹出）
+    setTimeout(async () => {
+      try {
+        const tpl = await _loadDefaultTemplate(editGroup);
+        _currentCreateTemplate = tpl;
+        const [allData, columns] = await Promise.all([
+          ExperimentData.getAllTemplates(),
+          Promise.resolve(tpl.columns)
+        ]);
+
+        // 渲染行数据
+        let formRowsHtml = '';
+        if (initForms.length > 0) {
+          initForms.forEach(f => {
+            formRowsHtml += _renderFormRow(columns, f, _cachedSamplesCheckboxHtml);
+          });
+        } else {
+          formRowsHtml += _renderFormRow(columns, null, '');
+        }
+
+        const inlineStyle = `
+          <style>
+            .create-form-table{width:100%;border-collapse:collapse;table-layout:fixed}
+            .create-form-table th{font-size:12px;font-weight:500;color:var(--color-text-secondary);
+              background:var(--color-bg-tertiary);padding:10px 4px;text-align:center;border:1px solid var(--color-border)}
+            .create-form-table td{padding:4px;border:1px solid var(--color-border-light)}
+            .create-form-table .cf-input{width:100%;min-width:0;border:1px solid var(--color-border);padding:6px 8px;
+              border-radius:var(--radius-sm);font-size:13px;font-family:var(--font-sans);background:var(--color-bg-primary);
+              outline:none;box-sizing:border-box;transition:border-color .15s}
+            .create-form-table .cf-input:focus{border-color:var(--color-teal);box-shadow:0 0 0 2px rgba(13,115,119,.12)}
+            .create-form-table .cf-input[type="number"]{text-align:right;font-family:var(--font-mono)}
+            .create-form-table .cf-total{font-weight:600;color:var(--color-teal);font-family:var(--font-mono);
+              text-align:center;font-size:14px;padding:7px 2px;background:var(--color-info-bg);border-radius:var(--radius-sm);display:block}
+            .cf-mode-select{font-size:11px;padding:2px 4px;border:1px solid var(--color-border);border-radius:var(--radius-sm);
+              background:var(--color-bg-primary);margin-bottom:2px;width:100%;box-sizing:border-box}
+            .cf-conc-value{margin-top:2px}
+            .cf-conc-formula-text{display:block;padding:2px 4px;font-size:11px;color:var(--color-text-tertiary);word-break:break-all}
+          </style>
+        `;
+
+        const body = `
+          ${inlineStyle}
+          ${_renderTemplateSelector(allData, tpl.id, isEdit)}
+          <div class="form-row">
+            <div class="form-group" style="flex:2">
+              <label class="form-label">实验组名称 *</label>
+              <input class="form-input" id="create-exp-name" value="${initName}">
+              ${isEdit ? `<input type="hidden" id="edit-group-id" value="${editGroup.id}">` : ''}
+            </div>
+            <div class="form-group" style="flex:1">
+              <label class="form-label">日期</label>
+              <input class="form-input" id="create-exp-date" value="${initDate}" readonly
+                     placeholder="点击选择日期"
+                     onclick="UI.renderDatePicker('create-exp-date','${initDate}',function(v){
+                       document.getElementById('create-exp-date').value=v;
+                     })">
+            </div>
+          </div>
+          <label class="form-label" style="margin-bottom:4px">处方组成</label>
+          <table class="create-form-table">
+            <colgroup>${columns.map(c => `<col style="width:${c.width}">`).join('')}</colgroup>
+            ${_renderFormTableHead(columns)}
+            <tbody id="create-form-tbody">${formRowsHtml}</tbody>
+          </table>
+          <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+            <button class="btn btn-sm btn-secondary" onclick="ExperimentCards.addFormRow()">+ 添加处方</button>
+            <button class="btn btn-sm btn-secondary" onclick="ExperimentCards.removeLastFormRow()">− 删除末行</button>
+            <span style="font-size:11px;color:var(--color-text-tertiary)">
+              每行独立药量、浓度配置，总重自动求和
+            </span>
+          </div>
+        `;
+
+        const footer = `
+          <button class="btn btn-secondary" onclick="UI.hideModal()">取消</button>
+          <button class="btn btn-primary" id="create-exp-confirm">${btnLabel}</button>
+        `;
+
+        // 第三步：内容就绪后替换占位（UI.showModal 内部复用已有容器）
+        // 使用已打开的模态框替换内容
+        const container = document.getElementById('modal-container');
+        if (container) {
+          container.innerHTML = body;
+          // 重建 footer
+          const footerEl = document.createElement('div');
+          footerEl.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:16px';
+          footerEl.innerHTML = footer;
+          container.appendChild(footerEl);
+        }
+
+        document.getElementById('create-exp-confirm').onclick =
+          isEdit ? () => updateExperiment(editGroup.id) : createExperiment;
+        requestAnimationFrame(() => { onCellChange(); });
+      } catch (err) {
+        console.error('[Dialog] 渲染异常:', err);
+        UI.toast('弹窗加载失败，请重试', 'error');
       }
-
-      // 内联样式（兼容现有弹窗）
-      const inlineStyle = `
-        <style>
-          .create-form-table{width:100%;border-collapse:collapse;table-layout:fixed}
-          .create-form-table th{font-size:12px;font-weight:500;color:var(--color-text-secondary);
-            background:var(--color-bg-tertiary);padding:10px 4px;text-align:center;border:1px solid var(--color-border)}
-          .create-form-table td{padding:4px;border:1px solid var(--color-border-light)}
-          .create-form-table .cf-input{width:100%;min-width:0;border:1px solid var(--color-border);padding:6px 8px;
-            border-radius:var(--radius-sm);font-size:13px;font-family:var(--font-sans);background:var(--color-bg-primary);
-            outline:none;box-sizing:border-box;transition:border-color .15s}
-          .create-form-table .cf-input:focus{border-color:var(--color-teal);box-shadow:0 0 0 2px rgba(13,115,119,.12)}
-          .create-form-table .cf-input[type="number"]{text-align:right;font-family:var(--font-mono)}
-          .create-form-table .cf-total{font-weight:600;color:var(--color-teal);font-family:var(--font-mono);
-            text-align:center;font-size:14px;padding:7px 2px;background:var(--color-info-bg);border-radius:var(--radius-sm);display:block}
-          .cf-mode-select{font-size:11px;padding:2px 4px;border:1px solid var(--color-border);border-radius:var(--radius-sm);
-            background:var(--color-bg-primary);margin-bottom:2px;width:100%;box-sizing:border-box}
-          .cf-conc-value{margin-top:2px}
-          .cf-conc-formula-text{display:block;padding:2px 4px;font-size:11px;color:var(--color-text-tertiary);word-break:break-all}
-        </style>
-      `;
-
-      const body = `
-        ${inlineStyle}
-        ${_renderTemplateSelector(allData, tpl.id, isEdit)}
-        <div class="form-row">
-          <div class="form-group" style="flex:2">
-            <label class="form-label">实验组名称 *</label>
-            <input class="form-input" id="create-exp-name" value="${initName}">
-            ${isEdit ? `<input type="hidden" id="edit-group-id" value="${editGroup.id}">` : ''}
-          </div>
-          <div class="form-group" style="flex:1">
-            <label class="form-label">日期</label>
-            <input class="form-input" id="create-exp-date" value="${initDate}" readonly
-                   placeholder="点击选择日期"
-                   onclick="UI.renderDatePicker('create-exp-date','${initDate}',function(v){
-                     document.getElementById('create-exp-date').value=v;
-                   })">
-          </div>
-        </div>
-        <label class="form-label" style="margin-bottom:4px">处方组成</label>
-        <table class="create-form-table">
-          <colgroup>${columns.map(c => `<col style="width:${c.width}">`).join('')}</colgroup>
-          ${_renderFormTableHead(columns)}
-          <tbody id="create-form-tbody">${formRowsHtml}</tbody>
-        </table>
-        <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
-          <button class="btn btn-sm btn-secondary" onclick="ExperimentCards.addFormRow()">+ 添加处方</button>
-          <button class="btn btn-sm btn-secondary" onclick="ExperimentCards.removeLastFormRow()">− 删除末行</button>
-          <span style="font-size:11px;color:var(--color-text-tertiary)">
-            每行独立药量、浓度配置，总重自动求和
-          </span>
-        </div>
-      `;
-
-      const footer = `
-        <button class="btn btn-secondary" onclick="UI.hideModal()">取消</button>
-        <button class="btn btn-primary" id="create-exp-confirm">${btnLabel}</button>
-      `;
-
-      UI.showModal(title, body, footer);
-      document.getElementById('create-exp-confirm').onclick =
-        isEdit ? () => updateExperiment(editGroup.id) : createExperiment;
-      setTimeout(onCellChange, 50);
-    });
+    }, 16); // ~1帧延迟，确保弹窗DOM已挂载
   }
 
   /** 编辑模式：样品多选复选框变化时的处理 */
@@ -922,13 +948,13 @@ const ExperimentCards = (() => {
     // 当前无额外联动逻辑，仅用于确保 _collectFormRows 能读取最新勾选状态
   }
 
-  /** 添加一行处方 */
+  /** 添加一行处方（使用缓存的复选HTML） */
   function addFormRow() {
     const tbody = document.getElementById('create-form-tbody');
     if (!tbody || !_currentCreateTemplate) return;
     const tr = document.createElement('tr');
     tr.className = 'form-row-entry';
-    tr.innerHTML = _renderFormRow(_currentCreateTemplate.columns, null);
+    tr.innerHTML = _renderFormRow(_currentCreateTemplate.columns, null, _cachedSamplesCheckboxHtml);
     tbody.appendChild(tr);
     onCellChange();
   }
@@ -984,20 +1010,13 @@ const ExperimentCards = (() => {
         }
       });
 
-      // ===== 【检查点3】收集样品ID：创建/编辑双分支 =====
+      // 收集样品ID：编辑模式从复选框读取，创建模式从文本读取
       let sids = [];
       const checkboxGroup = tr.querySelector('.sample-checkbox-group');
       if (checkboxGroup) {
-        // 编辑模式：读取勾选的复选框
-        checkboxGroup.querySelectorAll('input[type="checkbox"]:checked').forEach(cb => {
-          sids.push(cb.value);
-        });
-        console.log('[样品列调试] _collectFormRows 编辑模式(复选框)', { sids });
+        checkboxGroup.querySelectorAll('input[type="checkbox"]:checked').forEach(cb => { sids.push(cb.value); });
       } else {
-        // 创建模式：从文本输入读取（空格分隔）
-        const samplesStr = getVal('samples');
-        sids = samplesStr.split(/[,，\s、]+/).filter(s => s.length > 0);
-        console.log('[样品列调试] _collectFormRows 创建模式(文本输入)', { rawText: samplesStr, sids });
+        sids = getVal('samples').split(/[,，\s、]+/).filter(s => s.length > 0);
       }
       if (sids.length === 0) {
         UI.toast(`处方"${fn}"的对应样品不能为空`,'warning');
