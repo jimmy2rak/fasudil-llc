@@ -333,6 +333,43 @@ body {
 .login-status .btn {
   margin-top: 16px;
 }
+/* ===== 公式悬浮提示 ===== */
+.formula-hint-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-text-tertiary);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  cursor: help;
+  margin-left: 2px;
+  vertical-align: super;
+  line-height: 14px;
+  transition: background 0.15s;
+  user-select: none;
+}
+.formula-hint-icon:hover {
+  background: var(--color-teal);
+}
+#formula-tip {
+  position: fixed;
+  z-index: 1000;
+  background: #1a1a2e;
+  color: #e0e4ea;
+  font-size: 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+  max-width: 380px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  pointer-events: none;
+  font-family: system-ui, sans-serif;
+}
 /* ===== 顶部栏 ===== */
 .app-header {
   height: var(--header-height);

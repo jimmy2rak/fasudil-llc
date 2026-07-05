@@ -512,9 +512,9 @@ const ExperimentCards = (() => {
           formula:'spc+gmo+nmp+water+etoh+dopg', formulaDescription:'SPC+GMO+NMP+水+EtOH+DOPG-Na之和' },
         { id:'drugAmount', label:'本行加入药量', type:'number', unit:'mg', width:'85px', order:8, default:0 },
         { id:'density', label:'密度', type:'number', unit:'mg/ml', width:'70px', order:9, default:0 },
-        { id:'drugConc',   label:'本行载药浓度', type:'dynamic', width:'95px', order:10,
-          modes:[{ id:'manual', label:'手动输入' }, { id:'formula', label:'公式计算' }],
-          defaultMode:'formula', defaultFormula:'drugAmount/(rowTotal*1000+drugAmount)/density' },
+        { id:'drugConc',   label:'本行载药浓度', type:'computed', width:'95px', order:10,
+          formula:'drugAmount/(rowTotal*1000+drugAmount)/density',
+          formulaDescription:'本行加入药量 ÷ (本行总重×1000 + 本行加入药量) ÷ 密度' },
         { id:'takeVolume', label:'取用体积', type:'number', unit:'μL', width:'70px', order:11, default:0 },
         { id:'expDrugAmount', label:'实验药量', type:'computed', width:'75px', order:12,
           formula:'drugConc*takeVolume/1000', formulaDescription:'载药浓度×取用体积÷1000' },
@@ -544,10 +544,40 @@ const ExperimentCards = (() => {
       if (col.unit && (col.type === 'number' || col.type === 'computed')) {
         label += `<sub style="font-size:10px;color:var(--color-text-tertiary)">(${col.unit})</sub>`;
       }
+      // 载药浓度列加感叹号悬浮提示
+      if (col.id === 'drugConc') {
+        const tooltipContent = `计算公式：本行载药浓度(mg/ml) = 本行加入药量 ÷ (本行总重×1000 + 本行加入药量) ÷ 密度\n换算说明：本行总重单位g，自动转换为mg参与运算；1g=1000mg`;
+        label += `<span class="formula-hint-icon" 
+          onmouseenter="ExperimentCards._showFormulaTip(event, '${tooltipContent.replace(/'/g, "\\'").replace(/\n/g, '\\n')}')"
+          onmouseleave="ExperimentCards._hideFormulaTip()"
+          style="display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;background:var(--color-text-tertiary);color:#fff;font-size:9px;font-weight:700;cursor:help;margin-left:2px;vertical-align:super;line-height:14px">!</span>`;
+      }
       html += `<th style="width:${col.width};font-size:11px;padding:8px 2px">${label}</th>`;
     });
     html += '</tr></thead>';
     return html;
+  }
+
+  /** 显示公式悬浮提示 */
+  function _showFormulaTip(event, content) {
+    // 移除已有提示
+    _hideFormulaTip();
+    const tip = document.createElement('div');
+    tip.id = 'formula-tip';
+    tip.style.cssText = 'position:fixed;z-index:1000;background:#1a1a2e;color:#e0e4ea;font-size:12px;padding:10px 14px;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.25);max-width:380px;line-height:1.7;white-space:pre-wrap;pointer-events:none;font-family:system-ui,sans-serif';
+    // 将 \n 转换为 <br>
+    tip.innerHTML = content.replace(/\\n/g, '<br>');
+    document.body.appendChild(tip);
+    // 定位
+    const x = Math.min(event.clientX + 12, window.innerWidth - 400);
+    const y = Math.min(event.clientY + 12, window.innerHeight - 150);
+    tip.style.left = x + 'px';
+    tip.style.top = y + 'px';
+  }
+
+  function _hideFormulaTip() {
+    const existing = document.getElementById('formula-tip');
+    if (existing) existing.remove();
   }
 
   /** 根据模板列配置渲染单行（用于新建或编辑时的回填） */
@@ -583,8 +613,13 @@ const ExperimentCards = (() => {
           break;
         case 'computed':
           let computedVal = '0.00';
-          if (formData && formData._rowData && formData._rowData[col.id] !== undefined) {
-            computedVal = parseFloat(formData._rowData[col.id]).toFixed(2);
+          if (formData) {
+            // 兼容旧数据：drugConc 可能存储在 perRowDrugConc 而非 _rowData 中
+            if (col.id === 'drugConc' && formData.perRowDrugConc !== undefined) {
+              computedVal = parseFloat(formData.perRowDrugConc).toFixed(2);
+            } else if (formData._rowData && formData._rowData[col.id] !== undefined) {
+              computedVal = parseFloat(formData._rowData[col.id]).toFixed(2);
+            }
           }
           html += `<td><span class="cf-total" data-field="${col.id}" data-formula="${col.formula||''}"
             style="cursor:default;user-select:none">${computedVal}</span></td>`;
@@ -668,15 +703,17 @@ const ExperimentCards = (() => {
     }
   }
 
-  /** 输入变化时实时重新计算所有列（严格三步顺序 + try/catch 全局包裹） */
+  /** 输入变化时实时重新计算所有列（两步顺序 + try/catch 全局包裹） */
   function onCellChange() {
     try {
       const tbody = document.getElementById('create-form-tbody');
       if (!tbody) return;
       tbody.querySelectorAll('tr.form-row-entry').forEach((tr, rowIdx) => {
-        // 第一步：计算「本行总重」等不依赖 drugConc 的 computed 列
+        // 第一步：计算所有 computed 列（本行总重、载药浓度等）
+        // 载药浓度公式: drugAmount/(rowTotal*1000+drugAmount)/density
+        // 注意 expDrugAmount 依赖 drugConc，跳过它留到最后算
         tr.querySelectorAll('[data-formula]').forEach(el => {
-          if (el.dataset.field === 'expDrugAmount') return; // 实验药量最后算
+          if (el.dataset.field === 'expDrugAmount') return;
           const formula = el.dataset.formula;
           if (formula) {
             const result = _evaluateFormula(formula, tr);
@@ -684,21 +721,7 @@ const ExperimentCards = (() => {
           }
         });
 
-        // 第二步：计算「本行载药浓度」（依赖 rowTotal，所以第一步先算）
-        const modeEl = tr.querySelector('[data-field="drugConc-mode"]');
-        if (modeEl && modeEl.value === 'formula') {
-          const concInput = tr.querySelector('[data-field="drugConc"]');
-          const formulaEl = tr.querySelector('[data-field="drugConc-formula"]');
-          if (concInput && formulaEl) {
-            const formula = formulaEl.textContent.trim();
-            if (formula && formula !== '公式待配置') {
-              const result = _evaluateFormula(formula, tr);
-              concInput.value = result.toFixed(2);
-            }
-          }
-        }
-
-        // 第三步：计算「实验药量」（依赖 drugConc，所以第二步先算）
+        // 第二步：计算「实验药量」（依赖 drugConc，所以第一步先算出载药浓度）
         const expEl = tr.querySelector('[data-field="expDrugAmount"]');
         if (expEl) {
           const formula = expEl.dataset.formula;
@@ -913,14 +936,6 @@ const ExperimentCards = (() => {
           rowData[col.id] = isNaN(val) ? 0 : val;
         } else if (col.type === 'computed') {
           rowData[col.id] = parseFloat(getVal(col.id)) || 0;
-        } else if (col.type === 'dynamic') {
-          const concVal = parseFloat(getVal(col.id));
-          const modeEl = tr.querySelector(`[data-field="drugConc-mode"]`);
-          const mode = modeEl ? modeEl.value : 'manual';
-          const formulaEl = tr.querySelector(`[data-field="drugConc-formula"]`);
-          rowData[col.id] = isNaN(concVal) ? 0 : concVal;
-          rowData[col.id + '_mode'] = mode;
-          rowData[col.id + '_formula'] = formulaEl ? formulaEl.textContent.trim() : '';
         } else if (col.type === 'text') {
           rowData[col.id] = getVal(col.id) || '';
         }
@@ -937,8 +952,6 @@ const ExperimentCards = (() => {
       // 本行药量
       const rowDrugAmount = rowData.drugAmount || 0;
       const rowDrugConc = rowData.drugConc || 0;
-      const concMode = rowData.drugConc_mode || 'manual';
-      const concFormula = rowData.drugConc_formula || '';
       const rowDensity = rowData.density || 0;
       const rowTakeVolume = rowData.takeVolume || 0;
       const rowExpDrugAmount = rowData.expDrugAmount || 0;
@@ -950,8 +963,6 @@ const ExperimentCards = (() => {
         samples: sids,
         perRowDrugAmount: rowDrugAmount,
         perRowDrugConc: rowDrugConc,
-        perRowDrugConcMode: concMode,
-        perRowDrugConcFormula: concFormula,
         perRowDensity: rowDensity,
         perRowTakeVolume: rowTakeVolume,
         perRowExpDrugAmount: rowExpDrugAmount,
@@ -959,8 +970,6 @@ const ExperimentCards = (() => {
       rows.push({
         drugAmount: rowDrugAmount,
         drugConc: rowDrugConc,
-        drugConcMode: concMode,
-        drugConcFormula: concFormula,
         density: rowDensity,
         takeVolume: rowTakeVolume,
         expDrugAmount: rowExpDrugAmount,
@@ -1223,6 +1232,8 @@ const ExperimentCards = (() => {
     removeLastFormRow,
     onCellChange,
     onConcModeChange,
-    onTemplateChange
+    onTemplateChange,
+    _showFormulaTip,
+    _hideFormulaTip
   };
 })();
