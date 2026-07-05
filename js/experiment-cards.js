@@ -500,6 +500,8 @@ const ExperimentCards = (() => {
 
   /** 当前使用的模板（由 showCreateDialog 加载时设置） */
   let _currentCreateTemplate = null;
+  /** 编辑模式下现有样品列表（用于多选下拉复选渲染） */
+  let _existingEditSamples = [];
 
   /** 内置默认模板（无模板配置时的回退） */
   function _getBuiltinDefaultTemplate() {
@@ -594,8 +596,24 @@ const ExperimentCards = (() => {
     columns.forEach(col => {
       switch(col.type) {
         case 'text':
-          const textVal = formData ? (formData.name || formData[col.id] || '') : '';
-          html += `<td><input class="cf-input cf-name" data-field="${col.id}" value="${textVal}" placeholder="${col.default||''}"></td>`;
+          const txtVal = formData ? (formData.name || formData[col.id] || '') : '';
+          // 【修复】编辑模式：对应样品列改为多选复选（只展示已有样品，不新增）
+          if (col.id === 'samples' && _existingEditSamples.length > 0) {
+            const selectedSamples = formData && formData.samples ? formData.samples : [];
+            const selectedSet = new Set(selectedSamples);
+            let checkboxes = '<div class="sample-checkbox-group" data-field="samples">';
+            _existingEditSamples.forEach(s => {
+              const checked = selectedSet.has(s.id) ? 'checked' : '';
+              checkboxes += `<label class="sample-checkbox-label" style="display:inline-flex;align-items:center;gap:3px;margin:0 4px 2px 0;font-size:12px;cursor:pointer">
+                <input type="checkbox" class="sample-checkbox" value="${s.id}" ${checked} onchange="ExperimentCards._onSampleCheckboxChange()">
+                ${s.id}
+              </label>`;
+            });
+            checkboxes += '</div>';
+            html += `<td style="min-width:150px;white-space:nowrap">${checkboxes}</td>`;
+          } else {
+            html += `<td><input class="cf-input cf-name" data-field="${col.id}" value="${txtVal}" placeholder="${col.default||''}"></td>`;
+          }
           break;
         case 'number':
           let numVal = 0;
@@ -798,6 +816,9 @@ const ExperimentCards = (() => {
     const initDate = isEdit ? (editGroup.date || now) : now;
     const initForms = isEdit ? (editGroup.formulations || []) : [];
 
+    // 【修复】编辑模式：记录现有样品列表，供多选下拉复选使用
+    _existingEditSamples = isEdit ? (editGroup.samples || []) : [];
+
     // 异步加载模板后渲染弹窗
     _loadDefaultTemplate().then(async (tpl) => {
       _currentCreateTemplate = tpl;
@@ -887,6 +908,11 @@ const ExperimentCards = (() => {
     });
   }
 
+  /** 编辑模式：样品多选复选框变化时的处理 */
+  function _onSampleCheckboxChange() {
+    // 当前无额外联动逻辑，仅用于确保 _collectFormRows 能读取最新勾选状态
+  }
+
   /** 添加一行处方 */
   function addFormRow() {
     const tbody = document.getElementById('create-form-tbody');
@@ -949,9 +975,19 @@ const ExperimentCards = (() => {
         }
       });
 
-      // 收集样品ID
-      const samplesStr = getVal('samples');
-      const sids = samplesStr.split(/[,，\s、]+/).filter(s => s.length > 0);
+      // 【修复】收集样品ID：编辑模式从复选框读取，创建模式从文本读取
+      let sids = [];
+      const checkboxGroup = tr.querySelector('.sample-checkbox-group');
+      if (checkboxGroup) {
+        // 编辑模式：读取勾选的复选框
+        checkboxGroup.querySelectorAll('input[type="checkbox"]:checked').forEach(cb => {
+          sids.push(cb.value);
+        });
+      } else {
+        // 创建模式：从文本输入读取
+        const samplesStr = getVal('samples');
+        sids = samplesStr.split(/[,，\s、]+/).filter(s => s.length > 0);
+      }
       if (sids.length === 0) {
         UI.toast(`处方"${fn}"的对应样品不能为空`,'warning');
         return null;
@@ -1041,11 +1077,13 @@ const ExperimentCards = (() => {
     UI.hideModal();
     UI.toast(`已更新「${name}」`, 'success');
 
+    // 【修复】编辑后：不清空样品，保留手动数据，仅刷新当前视图
     if (currentExperimentId === groupId) {
       const container = document.getElementById('app-content');
       if (container) render(container, { name }, groupId);
+    } else {
+      App.navigate('experiments');
     }
-    App.navigate('experiments');
   }
 
   // ============================================================
@@ -1242,6 +1280,7 @@ const ExperimentCards = (() => {
     onConcModeChange,
     onTemplateChange,
     _showFormulaTip,
-    _hideFormulaTip
+    _hideFormulaTip,
+    _onSampleCheckboxChange
   };
 })();

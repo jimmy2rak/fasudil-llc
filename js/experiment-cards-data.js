@@ -143,13 +143,14 @@ const ExperimentData = (() => {
     const group = _userExperiments.find(e => e.id === experimentId);
     if (!group) return null;
 
-    // 保留旧的表格编辑数据
-    const oldOverrides = _dataOverrides[experimentId] || {};
-    _dataOverrides[experimentId] = {};
+    // ===== 核心修复：不销毁样品，保留所有手动录入数据 =====
+    // 保留旧样品的引用，用于匹配更新
+    const existingSamples = group.samples || [];
+    const allOverrides = _dataOverrides[experimentId] || {};
 
-    group.samples = [];
     const formulations = data.formulations || [];
     const rows = data.rows || [];
+    const updatedSampleIds = new Set(); // 跟踪被更新的样品ID
 
     for (let fi = 0; fi < formulations.length; fi++) {
       const f = formulations[fi];
@@ -159,46 +160,60 @@ const ExperimentData = (() => {
         ? parseFloat(rowData.drugAmount) || 0
         : (parseFloat(data.totalDrug) || 0) * (f.samples || []).length;
 
-      // 新增字段：密度、取用体积、实验药量
       const rowExpDrugAmount = parseFloat(rowData.expDrugAmount) || 0;
       const rowDensity = parseFloat(rowData.density) || 0;
       const rowTakeVolume = parseFloat(rowData.takeVolume) || 0;
-
-      // 强制使用实验药量作为单样品总药量
       const sampleTotalDrug = rowData.expDrugAmount !== undefined ? rowExpDrugAmount : rowDrugAmount;
 
-      // 【取消平分】每个样品使用完整实验药量，不复数均分
-      for (const sid of (f.samples || [])) {
-        const sample = {
-          id: sid,
-          experimentId: experimentId,
-          formulation: f.name,
-          formulationComponents: f.components,
-          formulationTotal: f.total,
-          totalDrug: sampleTotalDrug,
-          density: rowDensity,
-          takeVolume: rowTakeVolume,
-          expDrugAmount: rowExpDrugAmount,
-          group: data.groupName || data.experimentName || '',
-          timePoints: [],
-          absorbance: [],
-          sampleVols: [],
-          totalVols: [],
-          concentration: [],
-          cumulativeRelease: [],
-          releaseRate: [],
-          finalRate: 0,
-          residualAbs: 0,
-          residualAmount: 0,
-          residualRate: 0,
-          totalRecovery: 0
-        };
-        if (oldOverrides[sid]) {
-          _dataOverrides[experimentId][sid] = oldOverrides[sid];
+      // 此处方关联的样品ID列表（来自多选下拉）
+      const targetSampleIds = f.samples || [];
+
+      for (const sid of targetSampleIds) {
+        updatedSampleIds.add(sid);
+        // 查找是否已存在此样品
+        const existing = existingSamples.find(s => s.id === sid);
+        if (existing) {
+          // 【保留手动数据】仅更新配方参数，不动 timePoints/absorbance 等手动数据
+          existing.formulation = f.name;
+          existing.formulationComponents = f.components;
+          existing.formulationTotal = f.total;
+          existing.totalDrug = sampleTotalDrug;
+          existing.density = rowDensity;
+          existing.takeVolume = rowTakeVolume;
+          existing.expDrugAmount = rowExpDrugAmount;
+          existing.group = data.groupName || data.experimentName || '';
+        } else {
+          // 理论上编辑模式下不会走到这里（下拉只展示已有样品）
+          // 安全兜底：创建新样品，但保留字段初始化
+          const ns = {
+            id: sid,
+            experimentId: experimentId,
+            formulation: f.name,
+            formulationComponents: f.components,
+            formulationTotal: f.total,
+            totalDrug: sampleTotalDrug,
+            density: rowDensity,
+            takeVolume: rowTakeVolume,
+            expDrugAmount: rowExpDrugAmount,
+            group: data.groupName || data.experimentName || '',
+            timePoints: [],
+            absorbance: [],
+            sampleVols: [],
+            totalVols: [],
+            concentration: [],
+            cumulativeRelease: [],
+            releaseRate: [],
+            finalRate: 0,
+            residualAbs: 0,
+            residualAmount: 0,
+            residualRate: 0,
+            totalRecovery: 0
+          };
+          existingSamples.push(ns);
         }
-        group.samples.push(sample);
       }
 
+      // 存储行级配方数据
       f.perRowDrugAmount = rowDrugAmount;
       f.perRowDrugConc = rowData.drugConc !== undefined
         ? parseFloat(rowData.drugConc) || 0
@@ -211,17 +226,18 @@ const ExperimentData = (() => {
       if (rowData._values) f._rowData = rowData._values;
     }
 
+    // 更新实验组元数据
     group.name = data.experimentName || group.name;
     group.date = data.date || group.date;
     group.drugAmount = data.drugAmount || group.drugAmount;
     group.drugConc = data.drugConc || group.drugConc;
     group.formulations = formulations;
 
-    // 清理可能被删除的样品的旧编辑数据
-    const currentIds = new Set(group.samples.map(s => s.id));
-    for (const oldId of Object.keys(_dataOverrides[experimentId] || {})) {
-      if (!currentIds.has(oldId)) delete _dataOverrides[experimentId][oldId];
+    // 清理未被任何处方引用的样品的旧编辑数据
+    for (const oldId of Object.keys(allOverrides)) {
+      if (!updatedSampleIds.has(oldId)) delete allOverrides[oldId];
     }
+    _dataOverrides[experimentId] = allOverrides;
 
     _saveToStorage();
     return group;
