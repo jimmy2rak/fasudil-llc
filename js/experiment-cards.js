@@ -588,8 +588,12 @@ const ExperimentCards = (() => {
           const txtVal = formData ? (formData.name || formData[col.id] || '') : '';
           // 【修复】编辑模式：对应样品列改为多选复选（只展示已有样品，不新增）
           if (col.id === 'samples' && _existingEditSamples.length > 0) {
-            const selectedSamples = formData && formData.samples ? formData.samples : [];
-            const selectedSet = new Set(selectedSamples);
+            // 兼容旧数据：formData.samples 可能是空格分隔字符串或数组
+            let rawSamples = formData && formData.samples ? formData.samples : [];
+            if (typeof rawSamples === 'string') {
+              rawSamples = rawSamples.split(/[,，\s、]+/).filter(Boolean);
+            }
+            const selectedSet = new Set(rawSamples);
             let checkboxes = '<div class="sample-checkbox-group" data-field="samples">';
             _existingEditSamples.forEach(s => {
               const checked = selectedSet.has(s.id) ? 'checked' : '';
