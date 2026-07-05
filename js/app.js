@@ -2324,7 +2324,7 @@ const App = (() => {
     _editTemplate(newTpl);
   }
 
-  /** 获取默认列配置 */
+  /** 获取默认列配置（14列标准布局） */
   function _getDefaultColumns() {
     return [
       { id:'formulationName', label:'处方名称',     type:'text',    width:'90px',  order:0, default:'' },
@@ -2334,11 +2334,17 @@ const App = (() => {
       { id:'water', label:'水',      type:'number', unit:'g',  width:'55px', order:4, default:0 },
       { id:'etoh',  label:'EtOH',   type:'number', unit:'g',  width:'65px', order:5, default:0 },
       { id:'dopg',  label:'DOPG-Na',type:'number', unit:'g',  width:'75px', order:6, default:0 },
-      { id:'rowTotal',  label:'本行总重', type:'computed', width:'65px', order:7, formula:'spc+gmo+nmp+water+etoh+dopg' },
+      { id:'rowTotal',  label:'本行总重', type:'computed', width:'65px', order:7,
+        formula:'spc+gmo+nmp+water+etoh+dopg', formulaDescription:'SPC+GMO+NMP+水+EtOH+DOPG-Na之和' },
       { id:'drugAmount', label:'本行加入药量', type:'number', unit:'mg', width:'85px', order:8, default:0 },
-      { id:'drugConc',   label:'本行载药浓度', type:'dynamic', width:'95px', order:9,
-        modes:[{ id:'manual', label:'手动输入' }, { id:'formula', label:'公式计算' }], defaultMode:'manual' },
-      { id:'samples', label:'对应样品', type:'text', width:'115px', order:10, default:'' },
+      { id:'density', label:'密度', type:'number', unit:'g/ml', width:'70px', order:9, default:0 },
+      { id:'drugConc', label:'本行载药浓度', type:'computed', width:'95px', order:10,
+        formula:'drugAmount/(rowTotal*1000+drugAmount)*density*1000',
+        formulaDescription:'本行加入药量 ÷ (本行总重×1000 + 本行加入药量) × 密度(g/ml) × 1000' },
+      { id:'takeVolume', label:'取用体积', type:'number', unit:'μL', width:'70px', order:11, default:0 },
+      { id:'expDrugAmount', label:'实验药量', type:'computed', width:'75px', order:12,
+        formula:'drugConc*takeVolume/1000', formulaDescription:'载药浓度×取用体积÷1000' },
+      { id:'samples', label:'对应样品', type:'samples', width:'115px', order:13, default:'' },
     ];
   }
 
@@ -2364,13 +2370,16 @@ const App = (() => {
           <option value="text" ${col.type==='text'?'selected':''}>文本</option>
           <option value="number" ${col.type==='number'?'selected':''}>数值</option>
           <option value="computed" ${col.type==='computed'?'selected':''}>自动计算</option>
+          <option value="samples" ${col.type==='samples'?'selected':''}>样品复选</option>
           <option value="dynamic" ${col.type==='dynamic'?'selected':''}>动态模式</option>
         </select>
         <input class="form-input tpl-unit-input" data-edit="unit" value="${col.unit||''}"
                placeholder="单位" style="width:50px;${col.type==='number'?'':'display:none'}">
         <input class="form-input tpl-formula-input" data-edit="formula" value="${col.formula||''}"
                placeholder="公式" style="flex:1;${col.type==='computed'?'':'display:none'}">
-        <input class="form-input" data-edit="width" value="${col.width||'80px'}" placeholder="宽度" style="width:70px">
+        <input class="form-input tpl-formula-desc-input" data-edit="formulaDescription" value="${col.formulaDescription||''}"
+               placeholder="公式说明(选填)" style="width:120px;${col.type==='computed'?'':'display:none'}">
+        <input class="form-input" data-edit="width" value="${col.width||'80px'}" placeholder="宽度" style="width:65px">
         <button class="btn btn-sm btn-danger" onclick="App._removeTemplateColumn(${i},this)">✕</button>
       </div>
     `).join('');
@@ -2412,6 +2421,7 @@ const App = (() => {
     `;
 
     const footer = `
+      <button class="btn btn-secondary" onclick="App._showTemplatePreview('${data.id}')">预览表格</button>
       <button class="btn btn-secondary" onclick="UI.hideModal()">取消</button>
       <button class="btn btn-primary" id="tpl-save-btn">保存模板</button>
     `;
@@ -2436,12 +2446,14 @@ const App = (() => {
       const type = row.querySelector('[data-edit="type"]').value;
       const unit = row.querySelector('[data-edit="unit"]')?.value || '';
       const formula = row.querySelector('[data-edit="formula"]')?.value || '';
+      const formulaDesc = row.querySelector('[data-edit="formulaDescription"]')?.value || '';
       const width = row.querySelector('[data-edit="width"]')?.value || '80px';
       columns.push({
         id: 'col_' + i + '_' + label.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, ''),
         label, type, unit, width, order: i,
         default: type === 'number' ? 0 : '',
         formula: type === 'computed' ? formula : undefined,
+        formulaDescription: type === 'computed' ? (formulaDesc || undefined) : undefined,
         modes: type === 'dynamic' ? [{id:'manual',label:'手动输入'},{id:'formula',label:'公式计算'}] : undefined,
         defaultMode: type === 'dynamic' ? 'manual' : undefined,
       });
@@ -2449,7 +2461,7 @@ const App = (() => {
 
     if (columns.length === 0) { UI.toast('至少需要一个列配置','warning'); return; }
     if (!columns.some(c => c.id === 'samples')) {
-      UI.toast('列配置中必须包含"对应样品"列（类型: text）','warning');
+      UI.toast('列配置中必须包含"对应样品"列','warning');
       return;
     }
 
@@ -2569,7 +2581,9 @@ const App = (() => {
     const formulaInput = row.querySelector('.tpl-formula-input');
     const type = select.value;
     unitInput.style.display = type === 'number' ? '' : 'none';
+    const formulaDescInput = row.querySelector('.tpl-formula-desc-input');
     formulaInput.style.display = type === 'computed' ? '' : 'none';
+    if (formulaDescInput) formulaDescInput.style.display = type === 'computed' ? '' : 'none';
   }
 
   /** 重置为默认模板 */
@@ -2615,7 +2629,7 @@ const App = (() => {
                 style="margin-top:12px;width:100%">🤖 生成公式</button>
       </div>
     `;
-    const footer = `<button class="btn btn-secondary" onclick="UI.hideModal()">关闭</button>`;
+    const footer = `<button class="btn btn-secondary" onclick="App._showFormulaVariableHints()">变量参考</button><button class="btn btn-secondary" onclick="UI.hideModal()">关闭</button>`;
     UI.showModal('AI 生成公式', body, footer);
   }
 
@@ -2640,10 +2654,11 @@ const App = (() => {
             messages: [
               { role: 'system', content: '你是一个实验配方计算公式生成器。根据用户描述，生成一个 JavaScript 可执行的公式表达式。'
                 + '公式中引用表格中其他列的 ID 作为变量。只返回公式本身，不要加任何解释。'
-                + '可用的列IDs包括: spc, gmo, nmp, water, etoh, dopg。示例: spc+gmo+nmp+water+etoh+dopg' },
+                + '变量列表: spc(g), gmo(g), nmp(g), water(g), etoh(g), dopg(g), rowTotal(g), drugAmount(mg), density(g/ml), drugConc(mg/ml), takeVolume(μL)。'
+                + '支持四则运算 + - * / 和括号 ()。单位换算乘除1000直接写在公式中。' },
               { role: 'user', content: desc }
             ],
-            max_tokens: 100
+            max_tokens: 200
           }
         })
       });
@@ -2675,8 +2690,10 @@ const App = (() => {
       let formula = '';
       if (desc.includes('总重') || desc.includes('求和') || desc.includes('之和')) {
         formula = 'spc+gmo+nmp+water+etoh+dopg';
-      } else if (desc.includes('浓度') || desc.includes('药量')) {
-        formula = 'drugAmount / (rowTotal + drugAmount / 1000)';
+      } else if (desc.includes('浓度') || desc.includes('载药')) {
+        formula = 'drugAmount/(rowTotal*1000+drugAmount)*density*1000';
+      } else if (desc.includes('实验药量')) {
+        formula = 'drugConc*takeVolume/1000';
       } else {
         UI.toast('AI 服务不可用，请稍后重试', 'warning');
         btn.disabled = false; btn.textContent = '🤖 生成公式';
@@ -2701,6 +2718,80 @@ const App = (() => {
     }
     UI.hideModal();
     UI.toast('公式已应用到当前列', 'success');
+  }
+
+  /** 模板表格预览弹窗 */
+  function _showTemplatePreview(tplId) {
+    const columns = _getDefaultColumns();
+    // 构建简化版表头
+    let tableHtml = '<table class="data-table" style="font-size:12px"><thead><tr>';
+    columns.forEach(col => {
+      let label = col.label;
+      if (col.unit) label += `<sub style="font-size:10px;color:#8c94a6">(${col.unit})</sub>`;
+      if (col.type === 'computed') label += ' <span style="color:#0d7377;font-size:10px">⚡</span>';
+      tableHtml += `<th style="padding:6px 4px;white-space:nowrap">${label}</th>`;
+    });
+    tableHtml += '</tr></thead><tbody><tr>';
+    columns.forEach(col => {
+      if (col.type === 'text' || col.type === 'samples') {
+        tableHtml += '<td style="padding:4px"><input style="width:60px;padding:3px;border:1px solid #d8dce6;border-radius:3px;font-size:11px" disabled></td>';
+      } else if (col.type === 'number') {
+        tableHtml += '<td style="padding:4px"><input type="number" style="width:60px;padding:3px;border:1px solid #d8dce6;border-radius:3px;font-size:11px" disabled></td>';
+      } else if (col.type === 'computed') {
+        tableHtml += '<td style="padding:4px;text-align:center"><span style="padding:3px 8px;background:#f0f4f8;border-radius:3px;font-size:11px;color:#0d7377;font-weight:600">0.00</span></td>';
+      }
+    });
+    tableHtml += '</tr></tbody></table>';
+    tableHtml += '<div style="margin-top:8px;font-size:11px;color:#8c94a6">预览仅展示标准14列布局。保存后可在创建实验组时选择此模板查看完整交互效果。</div>';
+    UI.showModal('模板表格预览', tableHtml, '<button class="btn btn-secondary" onclick="UI.hideModal()">关闭</button>');
+  }
+
+  /** 公式变量提示列表 */
+  function _showFormulaVariableHints() {
+    const body = `
+      <div style="font-size:13px;line-height:2">
+        <p style="color:var(--color-text-secondary);margin-bottom:8px">可用变量列表（点击变量名复制到剪贴板）：</p>
+        <table class="data-table" style="box-shadow:none;font-size:12px">
+          <thead><tr><th>变量名</th><th>含义</th><th>单位</th></tr></thead>
+          <tbody>
+            <tr onclick="navigator.clipboard.writeText('spc')" style="cursor:pointer" title="点击复制">
+              <td><code style="color:#0d7377">spc</code></td><td>SPC 用量</td><td>g</td>
+            </tr>
+            <tr onclick="navigator.clipboard.writeText('gmo')" style="cursor:pointer">
+              <td><code style="color:#0d7377">gmo</code></td><td>GMO 用量</td><td>g</td>
+            </tr>
+            <tr onclick="navigator.clipboard.writeText('nmp')" style="cursor:pointer">
+              <td><code style="color:#0d7377">nmp</code></td><td>NMP 用量</td><td>g</td>
+            </tr>
+            <tr onclick="navigator.clipboard.writeText('water')" style="cursor:pointer">
+              <td><code style="color:#0d7377">water</code></td><td>水用量</td><td>g</td>
+            </tr>
+            <tr onclick="navigator.clipboard.writeText('etoh')" style="cursor:pointer">
+              <td><code style="color:#0d7377">etoh</code></td><td>EtOH 用量</td><td>g</td>
+            </tr>
+            <tr onclick="navigator.clipboard.writeText('dopg')" style="cursor:pointer">
+              <td><code style="color:#0d7377">dopg</code></td><td>DOPG-Na 用量</td><td>g</td>
+            </tr>
+            <tr onclick="navigator.clipboard.writeText('rowTotal')" style="cursor:pointer">
+              <td><code style="color:#0d7377">rowTotal</code></td><td>本行总重</td><td>g</td>
+            </tr>
+            <tr onclick="navigator.clipboard.writeText('drugAmount')" style="cursor:pointer">
+              <td><code style="color:#0d7377">drugAmount</code></td><td>本行加入药量</td><td>mg</td>
+            </tr>
+            <tr onclick="navigator.clipboard.writeText('density')" style="cursor:pointer">
+              <td><code style="color:#0d7377">density</code></td><td>密度</td><td>g/ml</td>
+            </tr>
+            <tr onclick="navigator.clipboard.writeText('drugConc')" style="cursor:pointer">
+              <td><code style="color:#0d7377">drugConc</code></td><td>本行载药浓度</td><td>mg/ml</td>
+            </tr>
+            <tr onclick="navigator.clipboard.writeText('takeVolume')" style="cursor:pointer">
+              <td><code style="color:#0d7377">takeVolume</code></td><td>取用体积</td><td>μL</td>
+            </tr>
+          </tbody>
+        </table>
+        <p style="color:var(--color-text-tertiary);font-size:11px;margin-top:8px">点击变量名自动复制，可在公式输入框粘贴使用。支持四则运算 + - * / 和括号 ()。</p>
+      </div>`;
+    UI.showModal('公式变量参考', body, '<button class="btn btn-secondary" onclick="UI.hideModal()">关闭</button>');
   }
 
   // --- AI 分析文件 ---
@@ -3046,6 +3137,9 @@ const App = (() => {
     _resetDefaultTemplates,
     _showAIGenerateFormulaDialog,
     _callAIGenerateFormula,
+    _applyGeneratedFormulaToEditor,
+    _showTemplatePreview,
+    _showFormulaVariableHints
     _applyGeneratedFormulaToEditor
   };
 })();
