@@ -502,48 +502,37 @@ const ExperimentCards = (() => {
   let _currentCreateTemplate = null;
   /** 编辑模式下现有样品列表（用于多选下拉复选渲染） */
   let _existingEditSamples = [];
+  /** 模板是否已锁定（新建实验选择模板后锁定） */
+  let _templateLocked = false;
 
-  /** 内置默认模板（无模板配置时的回退） */
+  /** 获取系统内置标准模板 */
   function _getBuiltinDefaultTemplate() {
-    return {
-      id: '_builtin_default',
-      name: '默认处方模板',
-      isDefault: true,
-      enabled: true,
-      columns: [
-        { id:'formulationName', label:'处方名称',     type:'text',    width:'90px',  order:0, default:'' },
-        { id:'spc',   label:'SPC',    type:'number', unit:'g',  width:'65px', order:1, default:0 },
-        { id:'gmo',   label:'GMO',    type:'number', unit:'g',  width:'65px', order:2, default:0 },
-        { id:'nmp',   label:'NMP',    type:'number', unit:'g',  width:'65px', order:3, default:0 },
-        { id:'water', label:'水',      type:'number', unit:'g',  width:'55px', order:4, default:0 },
-        { id:'etoh',  label:'EtOH',   type:'number', unit:'g',  width:'65px', order:5, default:0 },
-        { id:'dopg',  label:'DOPG-Na',type:'number', unit:'g',  width:'75px', order:6, default:0 },
-        { id:'rowTotal',  label:'本行总重', type:'computed', width:'65px', order:7,
-          formula:'spc+gmo+nmp+water+etoh+dopg', formulaDescription:'SPC+GMO+NMP+水+EtOH+DOPG-Na之和' },
-        { id:'drugAmount', label:'本行加入药量', type:'number', unit:'mg', width:'85px', order:8, default:0 },
-        { id:'density', label:'密度', type:'number', unit:'g/ml', width:'70px', order:9, default:0 },
-        { id:'drugConc',   label:'本行载药浓度', type:'computed', width:'95px', order:10,
-          formula:'drugAmount/(rowTotal*1000+drugAmount)*density*1000',
-          formulaDescription:'本行加入药量 ÷ (本行总重×1000 + 本行加入药量) × 密度(g/ml) × 1000' },
-        { id:'takeVolume', label:'取用体积', type:'number', unit:'μL', width:'70px', order:11, default:0 },
-        { id:'expDrugAmount', label:'实验药量', type:'computed', width:'75px', order:12,
-          formula:'drugConc*takeVolume/1000', formulaDescription:'载药浓度×取用体积÷1000' },
-        { id:'samples', label:'对应样品', type:'text', width:'115px', order:13, default:'' },
-      ]
-    };
+    return ExperimentData.getBuiltinTemplate();
   }
 
-  /** 加载默认模板 */
-  async function _loadDefaultTemplate() {
+  /** 加载首选/默认模板 */
+  async function _loadDefaultTemplate(editGroup) {
     try {
-      const templates = await ExperimentData.getTemplates();
-      if (templates && templates.length > 0) {
-        const def = templates.find(t => t.isDefault && t.enabled);
-        if (def) return def;
-        return templates.find(t => t.enabled) || _getBuiltinDefaultTemplate();
+      // 编辑模式：优先使用实验组绑定的模板
+      if (editGroup && editGroup.templateId) {
+        const all = await ExperimentData.getAllTemplates();
+        const matched = all.all.find(t => t.id === editGroup.templateId);
+        if (matched) return matched;
       }
+
+      // 读取用户首选模板ID
+      const defaultId = await ExperimentData.getUserDefaultTemplateId();
+      const all = await ExperimentData.getAllTemplates();
+
+      if (defaultId && defaultId !== 'system_default') {
+        const found = all.all.find(t => t.id === defaultId);
+        if (found) return found;
+      }
+
+      // 兜底：系统内置模板
+      return all.builtin;
     } catch {}
-    return _getBuiltinDefaultTemplate();
+    return ExperimentData.getBuiltinTemplate();
   }
 
   /** 根据模板列配置渲染表格表头 */
@@ -681,18 +670,19 @@ const ExperimentCards = (() => {
   }
 
   /** 渲染模板选择器 */
-  function _renderTemplateSelector(templates, currentTplId) {
-    const enabledTpls = templates.filter(t => t.enabled);
-    if (enabledTpls.length <= 1) return ''; // 只有默认模板时不显示选择器
+  function _renderTemplateSelector(allTemplates, currentTplId, isEdit) {
+    const totalCount = allTemplates.all.length;
+    const disabled = isEdit || _templateLocked ? 'disabled' : '';
+    const disabledNote = isEdit ? '（编辑模式不可切换模板）' : (_templateLocked ? '（已锁定，不可切换）' : '');
     return `
       <div class="form-row" style="margin-bottom:8px">
         <div class="form-group" style="flex:1">
-          <label class="form-label" style="font-size:12px">使用模板</label>
-          <select class="form-input" id="create-template-select"
+          <label class="form-label" style="font-size:12px">使用模板 ${disabledNote ? `<span style="color:var(--color-text-tertiary);font-weight:400">${disabledNote}</span>` : ''}</label>
+          <select class="form-input" id="create-template-select" ${disabled}
             onchange="ExperimentCards.onTemplateChange(this.value)">
-            ${enabledTpls.map(t =>
+            ${allTemplates.all.map(t =>
               `<option value="${t.id}" ${t.id===currentTplId?'selected':''}>
-                ${t.name}${t.isDefault ? ' (默认)' : ''}
+                ${t.builtin ? '📋 ' : ''}${t.name}${t.id === currentTplId && isEdit ? '（当前）' : ''}
               </option>`
             ).join('')}
           </select>
@@ -781,11 +771,17 @@ const ExperimentCards = (() => {
     if (mode === 'formula') onCellChange();
   }
 
-  /** 切换模板时重新渲染整个表格 */
+  /** 切换模板时重新渲染整个表格（新建模式下切换后锁定） */
   async function onTemplateChange(tplId) {
-    const templates = await ExperimentData.getTemplates();
-    const tpl = templates.find(t => t.id === tplId) || _getBuiltinDefaultTemplate();
+    const allData = await ExperimentData.getAllTemplates();
+    const tpl = allData.all.find(t => t.id === tplId) || _getBuiltinDefaultTemplate();
     _currentCreateTemplate = tpl;
+    _templateLocked = true; // 选择后锁定，不可二次切换
+
+    // 锁定下拉框
+    const select = document.getElementById('create-template-select');
+    if (select) select.disabled = true;
+
     const tbody = document.getElementById('create-form-tbody');
     if (!tbody) return;
     tbody.innerHTML = '';
@@ -820,17 +816,11 @@ const ExperimentCards = (() => {
     _existingEditSamples = isEdit ? (editGroup.samples || []) : [];
 
     // 异步加载模板后渲染弹窗
-    _loadDefaultTemplate().then(async (tpl) => {
+    _templateLocked = isEdit; // 编辑模式直接锁定
+    _loadDefaultTemplate(editGroup).then(async (tpl) => {
       _currentCreateTemplate = tpl;
-      const allTemplates = await ExperimentData.getTemplates();
-
-      // 如果是编辑模式，尝试从实验组的 templateId 加载对应模板
-      let useTpl = tpl;
-      if (isEdit && editGroup.templateId) {
-        const matched = (allTemplates||[]).find(t => t.id === editGroup.templateId);
-        if (matched) useTpl = matched;
-      }
-      const columns = useTpl.columns;
+      const allData = await ExperimentData.getAllTemplates();
+      const columns = tpl.columns;
 
       // 渲染行数据
       let formRowsHtml = '';
@@ -865,7 +855,7 @@ const ExperimentCards = (() => {
 
       const body = `
         ${inlineStyle}
-        ${_renderTemplateSelector(allTemplates, useTpl.id)}
+        ${_renderTemplateSelector(allData, tpl.id, isEdit)}
         <div class="form-row">
           <div class="form-group" style="flex:2">
             <label class="form-label">实验组名称 *</label>

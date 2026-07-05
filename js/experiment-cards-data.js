@@ -354,31 +354,190 @@ const ExperimentData = (() => {
     _saveToStorage();
   }
 
-  // ========== 模板数据持久化 ==========
-  /**
-   * 获取所有模板（从 user_data /api/data/template）
-   * 注：本地模式使用 localStorage + user_data 统一存储
-   */
-  async function getTemplates() {
+  // ==================================================================
+  // 模板数据持久化 — 双架构：系统内置只读 + 用户自定义持久化
+  // 存储方式：后端 API /api/data/template（key: user_templates, user_default_template）
+  // 本地回退：localStorage（开发/离线模式）
+  // ==================================================================
+
+  /** 系统内置标准模板（只读，前端硬编码） */
+  const SYSTEM_DEFAULT_TEMPLATE = {
+    id: 'system_default',
+    name: '系统内置标准模板',
+    description: '标准脂质体处方14列表格，含载药浓度、实验药量自动计算',
+    builtin: true,
+    enabled: true,
+    columns: [
+      { id:'formulationName', label:'处方名称',     type:'text',    width:'90px',  order:0, default:'' },
+      { id:'spc',   label:'SPC',    type:'number', unit:'g',  width:'65px', order:1, default:0 },
+      { id:'gmo',   label:'GMO',    type:'number', unit:'g',  width:'65px', order:2, default:0 },
+      { id:'nmp',   label:'NMP',    type:'number', unit:'g',  width:'65px', order:3, default:0 },
+      { id:'water', label:'水',      type:'number', unit:'g',  width:'55px', order:4, default:0 },
+      { id:'etoh',  label:'EtOH',   type:'number', unit:'g',  width:'65px', order:5, default:0 },
+      { id:'dopg',  label:'DOPG-Na',type:'number', unit:'g',  width:'75px', order:6, default:0 },
+      { id:'rowTotal',  label:'本行总重', type:'computed', width:'65px', order:7,
+        formula:'spc+gmo+nmp+water+etoh+dopg', formulaDescription:'SPC+GMO+NMP+水+EtOH+DOPG-Na之和' },
+      { id:'drugAmount', label:'本行加入药量', type:'number', unit:'mg', width:'85px', order:8, default:0 },
+      { id:'density', label:'密度', type:'number', unit:'g/ml', width:'70px', order:9, default:0 },
+      { id:'drugConc', label:'本行载药浓度', type:'computed', width:'95px', order:10,
+        formula:'drugAmount/(rowTotal*1000+drugAmount)*density*1000',
+        formulaDescription:'本行加入药量 ÷ (本行总重×1000 + 本行加入药量) × 密度(g/ml) × 1000' },
+      { id:'takeVolume', label:'取用体积', type:'number', unit:'μL', width:'70px', order:11, default:0 },
+      { id:'expDrugAmount', label:'实验药量', type:'computed', width:'75px', order:12,
+        formula:'drugConc*takeVolume/1000', formulaDescription:'载药浓度×取用体积÷1000' },
+      { id:'samples', label:'对应样品', type:'samples', width:'115px', order:13, default:'' },
+    ]
+  };
+
+  /** 通用 API fetch（带上 credentials） */
+  async function _apiFetch(url, options = {}) {
     try {
-      const raw = localStorage.getItem('FasudilLLC_Templates');
+      const res = await fetch(url, {
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache',
+          ...(options.headers || {})
+        },
+        ...options
+      });
+      if (res.status === 401) {
+        // 未登录时静默降级到 localStorage
+        return null;
+      }
+      return res;
+    } catch {
+      return null; // 网络错误静默处理
+    }
+  }
+
+  /** 从后端或 localStorage 获取用户自定义模板数组 */
+  async function getUserTemplates() {
+    // 优先从后端获取
+    const res = await _apiFetch('/api/data/settings/templates', { method: 'GET' });
+    if (res && res.ok) {
+      try {
+        const data = await res.json();
+        if (data && data.data) return data.data;
+      } catch {}
+    }
+    // 后端不可用 → 回退到 localStorage
+    try {
+      const raw = localStorage.getItem('FasudilLLC_UserTemplates');
       if (raw) return JSON.parse(raw);
     } catch {}
     return [];
   }
 
-  async function saveTemplates(templates) {
+  /** 保存用户自定义模板数组到后端 + localStorage */
+  async function saveUserTemplates(templates) {
+    // 同步到后端
+    const res = await _apiFetch('/api/data/settings/templates', {
+      method: 'PUT',
+      body: JSON.stringify({ value: templates })
+    });
+    // 始终同时写入 localStorage（离线兜底）
     try {
-      localStorage.setItem('FasudilLLC_Templates', JSON.stringify(templates));
-      // 同步到后端（静默失败，不影响本地操作）
-      for (const tpl of templates) {
-        await fetch('/api/data/template', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ key: tpl.id, value: tpl })
-        }).catch(() => {});
-      }
+      localStorage.setItem('FasudilLLC_UserTemplates', JSON.stringify(templates));
     } catch {}
+    return res && res.ok;
+  }
+
+  /** 从后端或 localStorage 获取用户首选模板ID */
+  async function getUserDefaultTemplateId() {
+    const res = await _apiFetch('/api/data/settings/defaultTemplate', { method: 'GET' });
+    if (res && res.ok) {
+      try {
+        const data = await res.json();
+        if (data && data.data) return data.data;
+      } catch {}
+    }
+    // 后端不可用 → 回退到 localStorage
+    try {
+      return localStorage.getItem('FasudilLLC_DefaultTemplateId') || 'system_default';
+    } catch {}
+    return 'system_default';
+  }
+
+  /** 保存用户首选模板ID到后端 + localStorage */
+  async function saveUserDefaultTemplateId(tplId) {
+    const res = await _apiFetch('/api/data/settings/defaultTemplate', {
+      method: 'PUT',
+      body: JSON.stringify({ value: tplId })
+    });
+    try {
+      localStorage.setItem('FasudilLLC_DefaultTemplateId', tplId);
+    } catch {}
+    return res && res.ok;
+  }
+
+  /**
+   * 获取完整模板列表（内置 + 用户自定义）
+   * 返回格式：{ builtin, userTemplates, all }
+   */
+  async function getAllTemplates() {
+    const userTemplates = await getUserTemplates();
+    return {
+      builtin: SYSTEM_DEFAULT_TEMPLATE,
+      userTemplates: userTemplates.filter(t => !t.builtin),
+      all: [SYSTEM_DEFAULT_TEMPLATE, ...userTemplates.filter(t => !t.builtin)]
+    };
+  }
+
+  /**
+   * 获取系统内置标准模板（只读副本）
+   */
+  function getBuiltinTemplate() {
+    return JSON.parse(JSON.stringify(SYSTEM_DEFAULT_TEMPLATE));
+  }
+
+  /**
+   * 保存单个用户自定义模板（增/改）
+   * @param {object} tpl - 模板对象（含 id）
+   */
+  async function saveUserTemplate(tpl) {
+    const templates = await getUserTemplates();
+    const idx = templates.findIndex(t => t.id === tpl.id);
+    if (idx >= 0) {
+      templates[idx] = tpl;
+    } else {
+      templates.push(tpl);
+    }
+    await saveUserTemplates(templates);
+  }
+
+  /**
+   * 删除用户自定义模板
+   * @param {string} tplId - 模板ID
+   */
+  async function deleteUserTemplate(tplId) {
+    let templates = await getUserTemplates();
+    templates = templates.filter(t => t.id !== tplId);
+    await saveUserTemplates(templates);
+    // 如果被删除的是首选模板，重置为系统内置
+    const defaultId = await getUserDefaultTemplateId();
+    if (defaultId === tplId) {
+      await saveUserDefaultTemplateId('system_default');
+    }
+  }
+
+  /**
+   * 复制模板（生成新模板对象）
+   * @param {object} srcTpl - 源模板
+   * @returns {object} 复制后的新模板
+   */
+  function cloneTemplate(srcTpl) {
+    const copy = JSON.parse(JSON.stringify(srcTpl));
+    copy.id = 'tpl-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+    copy.builtin = false;
+    copy.name = srcTpl.builtin ? (srcTpl.name + ' (副本)') : (srcTpl.name + ' (副本)');
+    return copy;
+  }
+
+  /** 检查模板名称是否重复（排除自身） */
+  async function isTemplateNameDuplicate(name, excludeId) {
+    const templates = await getUserTemplates();
+    return templates.some(t => t.name === name && t.id !== excludeId);
   }
 
   // ========== 公开 API ==========
@@ -397,8 +556,18 @@ const ExperimentData = (() => {
     getReports,
     deleteReport,
     updateRowDrugData,
-    getTemplates,
-    saveTemplates,
+    // 模板 API
+    SYSTEM_DEFAULT_TEMPLATE,
+    getBuiltinTemplate,
+    getUserTemplates,
+    saveUserTemplates,
+    saveUserTemplate,
+    deleteUserTemplate,
+    getUserDefaultTemplateId,
+    saveUserDefaultTemplateId,
+    getAllTemplates,
+    cloneTemplate,
+    isTemplateNameDuplicate,
     _saveToStorage
   };
 })();

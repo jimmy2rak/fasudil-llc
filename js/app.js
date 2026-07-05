@@ -2016,26 +2016,58 @@ const App = (() => {
 
     html += `</div>`;
 
-    // ====== 新增：实验表格模板管理 ======
-    const templates = await ExperimentData.getTemplates().catch(() => []);
+    // ====== 实验表格模板管理（双架构：内置标准 + 用户自定义） ======
+    const tplData = await ExperimentData.getAllTemplates();
+    const userTemplates = tplData.userTemplates;
+    const builtinTpl = tplData.builtin;
+    const userDefaultId = await ExperimentData.getUserDefaultTemplateId();
+    const totalCount = 1 + userTemplates.length; // 内置 + 用户自定义
+
     html += `<div class="card" style="margin-bottom:20px">
       <div class="card-title" style="display:flex;align-items:center;gap:8px">
         <span>📋 实验表格模板管理</span>
-        <span class="tag tag-info">${templates.length} 套模板</span>
+        <span class="tag tag-info">内置标准 + ${userTemplates.length} 套自定义</span>
       </div>
-      <p style="color:var(--color-text-secondary);margin-bottom:16px">自定义创建实验表格模板，配置列结构、单位、公式计算规则。新建实验时自动加载默认模板。</p>
+      <p style="color:var(--color-text-secondary);margin-bottom:16px">系统内置标准模板为只读基准模板；可创建自定义模板扩展列结构与计算规则。新建实验时自动加载首选模板。</p>
 
       <div id="template-list-container">
-        ${templates.length > 0
-          ? templates.map(tpl => _renderTemplateCard(tpl)).join('')
-          : '<div class="alert-card alert-info">暂无模板，点击下方按钮创建第一个模板。</div>'
+        <!-- 1. 系统内置标准模板卡片（只读） -->
+        <div class="template-card" style="border:1px solid var(--color-border-light);border-radius:8px;padding:12px;margin-bottom:8px;
+              background:var(--color-bg-tertiary);opacity:0.9">
+          <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:8px">
+            <div>
+              <strong>${builtinTpl.name}</strong>
+              <span class="tag tag-default" style="margin-left:6px;font-size:10px;background:#8c94a6;color:#fff">内置·不可编辑</span>
+              ${userDefaultId === 'system_default' ? '<span class="tag tag-primary" style="margin-left:6px">首选</span>' : ''}
+              <span style="font-size:12px;color:var(--color-text-tertiary);margin-left:8px">
+                ${builtinTpl.columns.length} 列 · ${builtinTpl.description||''}
+              </span>
+            </div>
+            <div style="display:flex;gap:4px">
+              <button class="btn btn-sm btn-secondary" onclick="App._previewBuiltinTemplate()">预览</button>
+              <button class="btn btn-sm btn-secondary" onclick="App._setDefaultTemplate('system_default')"
+                      style="${userDefaultId === 'system_default' ? 'opacity:0.5' : ''}">设为首选</button>
+            </div>
+          </div>
+          <div style="font-size:12px;color:var(--color-text-tertiary);overflow-x:auto;white-space:nowrap">
+            ${builtinTpl.columns.map(c => `<span style="display:inline-block;padding:2px 6px;margin-right:4px;
+              border:1px solid var(--color-border);border-radius:4px;background:var(--color-bg-primary)">
+              ${c.label}${c.unit ? '('+c.unit+')' : ''}${c.type === 'computed' ? ' ⚡' : ''}
+            </span>`).join('')}
+          </div>
+        </div>
+
+        <!-- 2. 用户自定义模板列表 -->
+        ${userTemplates.length > 0
+          ? userTemplates.map(tpl => _renderTemplateCard(tpl, userDefaultId)).join('')
+          : '<div class="alert-card alert-info" style="margin-top:12px">暂无自定义模板。点击下方按钮创建第一个模板。</div>'
         }
       </div>
 
       <div style="display:flex;gap:8px;margin-top:12px">
         <button class="btn btn-primary" onclick="App.showCreateTemplateDialog()">+ 新建模板</button>
         <button class="btn btn-secondary" onclick="App._resetDefaultTemplates()"
-                title="恢复到系统内置默认模板">恢复到默认</button>
+                title="清空全部自定义模板，仅保留系统内置标准模板">恢复到默认</button>
       </div>
     </div>`;
 
@@ -2276,15 +2308,15 @@ const App = (() => {
   // ================================================================
 
   /** 渲染模板卡片 HTML */
-  function _renderTemplateCard(tpl) {
+  function _renderTemplateCard(tpl, userDefaultId) {
+    const isDefault = (tpl.id === userDefaultId);
     return `
       <div class="template-card" style="border:1px solid var(--color-border-light);border-radius:8px;padding:12px;margin-bottom:8px;
-            ${tpl.isDefault ? 'border-color:var(--color-teal);background:var(--color-info-bg)' : ''}">
+            ${isDefault ? 'border-color:var(--color-teal);background:var(--color-info-bg)' : ''}">
         <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:8px">
           <div>
             <strong>${tpl.name}</strong>
-            ${tpl.isDefault ? '<span class="tag tag-primary" style="margin-left:6px">默认</span>' : ''}
-            ${!tpl.enabled ? '<span class="tag tag-default" style="margin-left:6px">已禁用</span>' : ''}
+            ${isDefault ? '<span class="tag tag-primary" style="margin-left:6px">首选</span>' : ''}
             <span style="font-size:12px;color:var(--color-text-tertiary);margin-left:8px">
               ${(tpl.columns||[]).length} 列${tpl.description ? ' · ' + tpl.description : ''}
             </span>
@@ -2292,12 +2324,9 @@ const App = (() => {
           <div style="display:flex;gap:4px">
             <button class="btn btn-sm btn-secondary" onclick="App._editTemplate('${tpl.id}')">编辑</button>
             <button class="btn btn-sm btn-secondary" onclick="App._duplicateTemplate('${tpl.id}')">复制</button>
-            ${!tpl.isDefault
-              ? `<button class="btn btn-sm btn-secondary" onclick="App._setDefaultTemplate('${tpl.id}')">设默认</button>
-                 <button class="btn btn-sm btn-danger" onclick="App._deleteTemplate('${tpl.id}')">删除</button>`
-              : '<span style="font-size:11px;color:var(--color-text-tertiary)">默认模板</span>'
-            }
-            <button class="btn btn-sm btn-secondary" onclick="App._showAIGenerateFormulaDialog('${tpl.id}')">🤖 AI</button>
+            <button class="btn btn-sm btn-secondary" onclick="App._setDefaultTemplate('${tpl.id}')"
+                    style="${isDefault ? 'opacity:0.5' : ''}">设为首选</button>
+            <button class="btn btn-sm btn-danger" onclick="App._deleteTemplate('${tpl.id}')">删除</button>
           </div>
         </div>
         <div style="font-size:12px;color:var(--color-text-tertiary);overflow-x:auto;white-space:nowrap">
@@ -2312,51 +2341,63 @@ const App = (() => {
 
   /** 新建模板 */
   async function showCreateTemplateDialog() {
+    const builtin = ExperimentData.getBuiltinTemplate();
     const newTpl = {
       id: 'tpl-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
       name: '',
       description: '',
-      isDefault: false,
+      builtin: false,
       enabled: true,
       createdAt: new Date().toISOString(),
-      columns: _getDefaultColumns(),
+      columns: builtin.columns,
     };
     _editTemplate(newTpl);
   }
 
-  /** 获取默认列配置（14列标准布局） */
+  /** 获取默认列配置（14列标准布局 - 已迁移至 ExperimentData.SYSTEM_DEFAULT_TEMPLATE） */
   function _getDefaultColumns() {
-    return [
-      { id:'formulationName', label:'处方名称',     type:'text',    width:'90px',  order:0, default:'' },
-      { id:'spc',   label:'SPC',    type:'number', unit:'g',  width:'65px', order:1, default:0 },
-      { id:'gmo',   label:'GMO',    type:'number', unit:'g',  width:'65px', order:2, default:0 },
-      { id:'nmp',   label:'NMP',    type:'number', unit:'g',  width:'65px', order:3, default:0 },
-      { id:'water', label:'水',      type:'number', unit:'g',  width:'55px', order:4, default:0 },
-      { id:'etoh',  label:'EtOH',   type:'number', unit:'g',  width:'65px', order:5, default:0 },
-      { id:'dopg',  label:'DOPG-Na',type:'number', unit:'g',  width:'75px', order:6, default:0 },
-      { id:'rowTotal',  label:'本行总重', type:'computed', width:'65px', order:7,
-        formula:'spc+gmo+nmp+water+etoh+dopg', formulaDescription:'SPC+GMO+NMP+水+EtOH+DOPG-Na之和' },
-      { id:'drugAmount', label:'本行加入药量', type:'number', unit:'mg', width:'85px', order:8, default:0 },
-      { id:'density', label:'密度', type:'number', unit:'g/ml', width:'70px', order:9, default:0 },
-      { id:'drugConc', label:'本行载药浓度', type:'computed', width:'95px', order:10,
-        formula:'drugAmount/(rowTotal*1000+drugAmount)*density*1000',
-        formulaDescription:'本行加入药量 ÷ (本行总重×1000 + 本行加入药量) × 密度(g/ml) × 1000' },
-      { id:'takeVolume', label:'取用体积', type:'number', unit:'μL', width:'70px', order:11, default:0 },
-      { id:'expDrugAmount', label:'实验药量', type:'computed', width:'75px', order:12,
-        formula:'drugConc*takeVolume/1000', formulaDescription:'载药浓度×取用体积÷1000' },
-      { id:'samples', label:'对应样品', type:'samples', width:'115px', order:13, default:'' },
-    ];
+    return ExperimentData.getBuiltinTemplate().columns;
+  }
+
+  /** 预览内置模板 */
+  function _previewBuiltinTemplate() {
+    const builtin = ExperimentData.getBuiltinTemplate();
+    _showTemplatePreviewInner(builtin.columns, '系统内置标准模板 · 预览');
+  }
+
+  /** 模板预览弹窗（通用） */
+  function _showTemplatePreviewInner(columns, title) {
+    let tableHtml = '<table class="data-table" style="font-size:12px"><thead><tr>';
+    columns.forEach(col => {
+      let label = col.label;
+      if (col.unit) label += `<sub style="font-size:10px;color:#8c94a6">(${col.unit})</sub>`;
+      if (col.type === 'computed') label += ' <span style="color:#0d7377;font-size:10px">⚡</span>';
+      tableHtml += `<th style="padding:6px 4px;white-space:nowrap">${label}</th>`;
+    });
+    tableHtml += '</tr></thead><tbody><tr>';
+    columns.forEach(col => {
+      if (col.type === 'text' || col.type === 'samples') {
+        tableHtml += '<td style="padding:4px"><input style="width:60px;padding:3px;border:1px solid #d8dce6;border-radius:3px;font-size:11px" disabled></td>';
+      } else if (col.type === 'number') {
+        tableHtml += '<td style="padding:4px"><input type="number" style="width:60px;padding:3px;border:1px solid #d8dce6;border-radius:3px;font-size:11px" disabled></td>';
+      } else if (col.type === 'computed') {
+        tableHtml += '<td style="padding:4px;text-align:center"><span style="padding:3px 8px;background:#f0f4f8;border-radius:3px;font-size:11px;color:#0d7377;font-weight:600">0.00</span></td>';
+      }
+    });
+    tableHtml += '</tr></tbody></table>';
+    UI.showModal(title || '模板表格预览', tableHtml, '<button class="btn btn-secondary" onclick="UI.hideModal()">关闭</button>');
   }
 
   /** 编辑模板 */
   async function _editTemplate(tplId) {
-    const templates = await ExperimentData.getTemplates().catch(() => []);
+    const templates = await ExperimentData.getUserTemplates();
     const tpl = tplId ? templates.find(t => t.id === tplId) : null;
     const isNew = !tpl;
+    const builtin = ExperimentData.getBuiltinTemplate();
     const data = tpl ? JSON.parse(JSON.stringify(tpl)) : {
       id: 'tpl-' + Date.now() + '-' + Math.random().toString(36).slice(2,6),
-      name: '', description: '', isDefault: false, enabled: true,
-      createdAt: new Date().toISOString(), columns: _getDefaultColumns()
+      name: '', description: '', builtin: false, enabled: true,
+      createdAt: new Date().toISOString(), columns: builtin.columns
     };
 
     // 列编辑器
@@ -2434,7 +2475,14 @@ const App = (() => {
   async function _saveTemplateFromDialog(tplId, isNew) {
     const name = document.getElementById('tpl-edit-name').value.trim();
     if (!name) { UI.toast('请输入模板名称','warning'); return; }
-    const isDefault = document.getElementById('tpl-edit-default').checked;
+
+    // 【新增】重名校验
+    const isDuplicate = await ExperimentData.isTemplateNameDuplicate(name, tplId);
+    if (isDuplicate) {
+      UI.toast(`模板名称「${name}」已存在，请更换名称`, 'warning');
+      return;
+    }
+
     const desc = document.getElementById('tpl-edit-desc').value.trim();
 
     // 收集列配置
@@ -2467,29 +2515,11 @@ const App = (() => {
 
     const tpl = {
       id: tplId,
-      name, description: desc, isDefault, enabled: true,
+      name, description, builtin: false, enabled: true,
       columns, createdAt: isNew ? new Date().toISOString() : undefined,
     };
 
-    // 如果设为默认，先清空其他模板的默认标记
-    if (isDefault) {
-      const allTemplates = await ExperimentData.getTemplates().catch(() => []);
-      for (const t of allTemplates) {
-        if (t.id !== tplId && t.isDefault) {
-          t.isDefault = false;
-        }
-      }
-      await ExperimentData.saveTemplates(allTemplates);
-    }
-
-    const allTemplates = await ExperimentData.getTemplates().catch(() => []);
-    const existingIdx = allTemplates.findIndex(t => t.id === tplId);
-    if (existingIdx >= 0) {
-      allTemplates[existingIdx] = tpl;
-    } else {
-      allTemplates.push(tpl);
-    }
-    await ExperimentData.saveTemplates(allTemplates);
+    await ExperimentData.saveUserTemplate(tpl);
 
     UI.hideModal();
     UI.toast(`模板「${name}」已保存`, 'success');
@@ -2498,47 +2528,41 @@ const App = (() => {
 
   /** 复制模板 */
   async function _duplicateTemplate(tplId) {
-    const templates = await ExperimentData.getTemplates().catch(() => []);
-    const src = templates.find(t => t.id === tplId);
+    let templates = await ExperimentData.getUserTemplates();
+    const allData = await ExperimentData.getAllTemplates();
+    let src = templates.find(t => t.id === tplId);
+    // 如果是内置模板，从 builtin 复制
+    if (!src && tplId === 'system_default') {
+      src = allData.builtin;
+    }
     if (!src) { UI.toast('模板不存在','error'); return; }
-    const copy = JSON.parse(JSON.stringify(src));
-    copy.id = 'tpl-' + Date.now() + '-' + Math.random().toString(36).slice(2,6);
-    copy.name = src.name + ' (副本)';
-    copy.isDefault = false;
+    const copy = ExperimentData.cloneTemplate(src);
     templates.push(copy);
-    await ExperimentData.saveTemplates(templates);
+    await ExperimentData.saveUserTemplates(templates);
     UI.toast('模板已复制', 'success');
     showSettings();
   }
 
-  /** 设为默认模板 */
+  /** 设为首选模板 */
   async function _setDefaultTemplate(tplId) {
-    const templates = await ExperimentData.getTemplates().catch(() => []);
-    for (const t of templates) {
-      t.isDefault = (t.id === tplId);
-    }
-    await ExperimentData.saveTemplates(templates);
-    UI.toast('默认模板已更新', 'success');
+    await ExperimentData.saveUserDefaultTemplateId(tplId);
+    UI.toast('首选模板已更新', 'success');
     showSettings();
   }
 
-  /** 删除模板 */
+  /** 删除模板（仅限自定义模板） */
   async function _deleteTemplate(tplId) {
-    const templates = await ExperimentData.getTemplates().catch(() => []);
-    const tpl = templates.find(t => t.id === tplId);
-    if (!tpl) return;
-    if (tpl.isDefault) {
-      UI.toast('默认模板不可删除，请先设置其他模板为默认','warning');
+    if (tplId === 'system_default') {
+      UI.toast('系统内置模板不可删除', 'warning');
       return;
     }
+    const templates = await ExperimentData.getUserTemplates();
+    const tpl = templates.find(t => t.id === tplId);
+    if (!tpl) return;
     UI.confirm('删除模板', `确定要删除模板「${tpl.name}」吗？`, async () => {
-      const idx = templates.findIndex(t => t.id === tplId);
-      if (idx >= 0) {
-        templates.splice(idx, 1);
-        await ExperimentData.saveTemplates(templates);
-        UI.toast('模板已删除', 'success');
-        showSettings();
-      }
+      await ExperimentData.deleteUserTemplate(tplId);
+      UI.toast('模板已删除', 'success');
+      showSettings();
     });
   }
 
@@ -2586,11 +2610,12 @@ const App = (() => {
     if (formulaDescInput) formulaDescInput.style.display = type === 'computed' ? '' : 'none';
   }
 
-  /** 重置为默认模板 */
+  /** 重置为默认（清空用户自定义模板，恢复系统内置为首选） */
   async function _resetDefaultTemplates() {
-    UI.confirm('重置模板', '将恢复为系统内置默认模板，已有自定义模板将被覆盖。确定继续？', async () => {
-      await ExperimentData.saveTemplates([]);
-      UI.toast('已恢复默认模板', 'success');
+    UI.confirm('恢复到默认', '此操作将清空全部用户自定义模板，仅保留系统内置标准模板。确定继续？', async () => {
+      await ExperimentData.saveUserTemplates([]);
+      await ExperimentData.saveUserDefaultTemplateId('system_default');
+      UI.toast('已恢复至系统内置标准模板', 'success');
       showSettings();
     });
   }
@@ -2720,9 +2745,10 @@ const App = (() => {
     UI.toast('公式已应用到当前列', 'success');
   }
 
-  /** 模板表格预览弹窗 */
+  /** 模板表格预览弹窗（使用内置模板） */
   function _showTemplatePreview(tplId) {
-    const columns = _getDefaultColumns();
+    const builtin = ExperimentData.getBuiltinTemplate();
+    const columns = builtin.columns;
     // 构建简化版表头
     let tableHtml = '<table class="data-table" style="font-size:12px"><thead><tr>';
     columns.forEach(col => {
@@ -3139,6 +3165,8 @@ const App = (() => {
     _callAIGenerateFormula,
     _applyGeneratedFormulaToEditor,
     _showTemplatePreview,
+    _previewBuiltinTemplate,
+    _showTemplatePreviewInner,
     _showFormulaVariableHints
   };
 })();
