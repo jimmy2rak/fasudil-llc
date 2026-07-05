@@ -79,17 +79,21 @@ const App = (() => {
   async function init() {
     console.log('[Fasudil-LLC] App.init()');
 
-    // 第一步：快速检查本地是否有 auth_token cookie（硬跳转跳过异步请求）
-    // 这样可以避免无 token 时白白请求 /api/auth/me
-    const hasCookie = document.cookie.split(';').some(c => c.trim().startsWith('auth_token='));
+    // 第一步：检查 localStorage 是否有已登录标记（快速路径）
+    // 【注意】不能检查 document.cookie 中的 auth_token，因为该 cookie 是 HttpOnly，
+    // 浏览器端的 JS 无法读取。必须通过 /api/auth/me 接口由服务端验证。
+    const localUser = (() => {
+      try { return JSON.parse(localStorage.getItem('auth_user')); } catch { return null; }
+    })();
 
-    if (!hasCookie) {
-      console.log('[Fasudil-LLC] 无本地 token，直接显示登录页');
+    if (!localUser) {
+      // 无本地登录标记 → 直接显示登录页（无需发 API 请求）
+      console.log('[Fasudil-LLC] 无本地登录标记，显示登录页');
       safeShowLoginScreen();
       return;
     }
 
-    // 第二步：有 token 才调用鉴权接口验证有效性
+    // 第二步：有本地标记，调用鉴权接口验证 token 有效性（服务端验证 HttpOnly cookie）
     try {
       const res = await fetch('/api/auth/me', {
         credentials: 'same-origin',
@@ -106,11 +110,14 @@ const App = (() => {
       } else {
         // token 过期或无效 → 清除后显示登录页
         console.warn('[Fasudil-LLC] 鉴权失败（' + res.status + '），清除凭证');
-        forceLogout();
-        // forceLogout 会 window.location.replace('/')，页面会刷新
+        try { localStorage.removeItem('auth_user'); } catch {}
+        initialized = false;
+        safeShowLoginScreen();
       }
     } catch (err) {
       console.error('[Fasudil-LLC] 登录检查失败:', err.message);
+      // 网络错误时尝试读取缓存的后台数据，不行就显示登录
+      try { localStorage.removeItem('auth_user'); } catch {}
       safeShowLoginScreen();
     }
   }
@@ -240,7 +247,10 @@ const App = (() => {
         });
         const d = await r.json();
         if (r.ok && d.success) {
-          window.location.reload();
+          // 登录成功：持久化用户信息 + 硬跳转
+          try { if (d.user) localStorage.setItem('auth_user', JSON.stringify(d.user)); } catch (e) {}
+          try { sessionStorage.setItem('logged_in', '1'); } catch (e) {}
+          window.location.href = '/';
         } else {
           document.getElementById('fb-error').textContent = d.error || '验证失败';
           document.getElementById('fb-error').classList.add('visible');

@@ -546,13 +546,32 @@ const UI = (() => {
         });
         const data = await res.json();
         if (res.ok && data.success) {
-          // 登录成功 → 刷新页面，init() 会读取 cookie 进入主应用
-          window.location.reload();
+          // ==== 登录成功：持久化凭证 + 硬跳转 ====
+          // 1. 保存用户信息到 localStorage（供 init() 快速判断登录状态）
+          try {
+            if (data.user) {
+              localStorage.setItem('auth_user', JSON.stringify(data.user));
+            }
+          } catch (e) {
+            console.warn('[Login] localStorage 写入失败:', e.message);
+          }
+          // 2. 登录状态标识
+          try {
+            sessionStorage.setItem('logged_in', '1');
+          } catch (e) {}
+
+          console.log('[Login] OTP 验证成功，用户:', data.user?.email);
+
+          // 3. 硬跳转首页（比 window.location.reload() 更可靠）
+          //    浏览器会携带 HttpOnly auth_token cookie，init() 通过
+          //    localStorage auth_user 判断 + /api/auth/me 验证进入主应用
+          window.location.href = '/';
         } else {
           setLoading(false);
           showError(data.error || '验证失败，请检查验证码');
         }
       } catch (err) {
+        console.error('[Login] OTP 验证请求异常:', err.message);
         setLoading(false);
         showError('网络错误，请检查连接后重试');
       }
