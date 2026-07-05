@@ -604,8 +604,10 @@ const App = (() => {
         for (let j = 0; j < i; j++) ss += concs[j] * 2;
         cum.push((concs[i] * 30 + ss) / 1000);
       }
-      const totalBase = sample.expDrugAmount !== undefined ? sample.expDrugAmount : (sample.totalDrug || 3.43);
-      finalRate = absVals.length > 0 ? (cum[cum.length-1] / totalBase) * 100 : 0;
+      // analyzeWithSkill 是文件上传后的快速预览，此时无实验/样品对象
+      // 使用固定占位值 3.43mg 作为预估总药量（用户导入后再精确计算）
+      const DRUG_AMOUNT_PLACEHOLDER = 3.43;
+      finalRate = absVals.length > 0 ? (cum[cum.length-1] / DRUG_AMOUNT_PLACEHOLDER) * 100 : 0;
     }
     const html = `<div style="background:var(--color-bg-secondary);border-radius:8px;padding:16px;margin-bottom:12px"><div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px"><div><strong>文件:</strong> ${fileName}</div><div><strong>数据行数:</strong> ${absVals.length}</div><div><strong>估计释放率:</strong> ${finalRate.toFixed(2)}%</div></div></div><div style="font-size:13px;color:var(--color-text-secondary)"><p>• 文件包含 ${absVals.length} 数据点，估计释放率 ${finalRate.toFixed(2)}%。</p><p>• 通过「保存到实验」导入后进行完整 Skill 分析。</p></div>`;
     UI.showModal(`Skill 分析 — ${fileName}`, `<div style="max-height:500px;overflow-y:auto">${html}</div>`, `<button class="btn btn-primary btn-sm" onclick="UI.hideModal();App.showSaveToExperiment('${fileName}')">📥 保存到实验</button><button class="btn btn-secondary btn-sm" onclick="UI.hideModal()">关闭</button>`);
@@ -829,7 +831,7 @@ const App = (() => {
         formulation: formName,
         formulationComponents: formObj ? (formObj.components || {}) : {},
         formulationTotal: formObj ? (formObj.total || 0) : 0,
-        totalDrug: formObj ? (formObj.perRowExpDrugAmount !== undefined ? formObj.perRowExpDrugAmount : (exp.drugAmount || 3.43)) : (exp.drugAmount || 3.43),
+        totalDrug: formObj ? (formObj.perRowExpDrugAmount !== undefined ? formObj.perRowExpDrugAmount : (exp.drugAmount || 0)) : (exp.drugAmount || 0),
         group: exp.name,
         timePoints: [], absorbance: [], sampleVols: [], totalVols: [],
         concentration: [], cumulativeRelease: [], releaseRate: [],
