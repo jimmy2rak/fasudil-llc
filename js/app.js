@@ -3140,6 +3140,5 @@ const App = (() => {
     _applyGeneratedFormulaToEditor,
     _showTemplatePreview,
     _showFormulaVariableHints
-    _applyGeneratedFormulaToEditor
   };
 })();
