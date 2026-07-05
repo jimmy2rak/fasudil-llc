@@ -80,8 +80,6 @@ const App = (() => {
     console.log('[Fasudil-LLC] App.init()');
 
     // 第一步：检查 localStorage 是否有已登录标记（快速路径）
-    // 【注意】不能检查 document.cookie 中的 auth_token，因为该 cookie 是 HttpOnly，
-    // 浏览器端的 JS 无法读取。必须通过 /api/auth/me 接口由服务端验证。
     const localUser = (() => {
       try { return JSON.parse(localStorage.getItem('auth_user')); } catch { return null; }
     })();
@@ -93,31 +91,48 @@ const App = (() => {
       return;
     }
 
-    // 第二步：有本地标记，调用鉴权接口验证 token 有效性（服务端验证 HttpOnly cookie）
-    try {
-      const res = await fetch('/api/auth/me', {
-        credentials: 'same-origin',
-        headers: {
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'Pragma': 'no-cache'
-        }
-      });
+    // 第二步：有本地标记 → 立即显示主应用骨架（侧边栏+顶栏），不等接口
+    const loginScreen = document.getElementById('login-screen');
+    const appMain = document.getElementById('app-main');
+    if (loginScreen) loginScreen.style.display = 'none';
+    if (appMain) appMain.style.display = 'block';
 
-      if (res.ok) {
-        // 已登录 → 进入主应用
+    // 第三步：并行发起所有异步请求（鉴权 + 模板预加载 + 规则加载）
+    try {
+      const [authRes] = await Promise.all([
+        fetch('/api/auth/me', {
+          credentials: 'same-origin',
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache'
+          }
+        }),
+        // 模板预加载（后台静默执行，不阻塞）
+        (ExperimentCards.preloadTemplateCache ? ExperimentCards.preloadTemplateCache() : Promise.resolve()),
+        // 规则加载（静默失败）
+        ML.loadRules().catch(e => console.warn('加载规则失败:', e.message))
+      ]);
+
+      if (authRes && authRes.ok) {
+        // 鉴权通过 → 渲染首页
         console.log('[Fasudil-LLC] 鉴权通过，进入主应用');
-        await enterMainApp();
+        await navigate('dashboard');
+        initialized = true;
+        console.log('[Fasudil-LLC] 应用初始化成功');
       } else {
         // token 过期或无效 → 清除后显示登录页
-        console.warn('[Fasudil-LLC] 鉴权失败（' + res.status + '），清除凭证');
+        console.warn('[Fasudil-LLC] 鉴权失败，清除凭证');
         try { localStorage.removeItem('auth_user'); } catch {}
         initialized = false;
+        if (loginScreen) loginScreen.style.display = 'flex';
+        if (appMain) appMain.style.display = 'none';
         safeShowLoginScreen();
       }
     } catch (err) {
       console.error('[Fasudil-LLC] 登录检查失败:', err.message);
-      // 网络错误时尝试读取缓存的后台数据，不行就显示登录
       try { localStorage.removeItem('auth_user'); } catch {}
+      if (loginScreen) loginScreen.style.display = 'flex';
+      if (appMain) appMain.style.display = 'none';
       safeShowLoginScreen();
     }
   }
@@ -272,22 +287,11 @@ const App = (() => {
 
   /** 进入主应用 */
   async function enterMainApp() {
-    // 切换 UI
-    const loginScreen = document.getElementById('login-screen');
-    const appMain = document.getElementById('app-main');
-    if (loginScreen) loginScreen.style.display = 'none';
-    if (appMain) appMain.style.display = 'block';
-
-    try {
-      try { await ML.loadRules(); } catch (e) { console.warn('加载规则失败:', e.message); }
+    // enterMainApp 现在由 init() 内联处理，此函数保留作为兼容垫片
+    // 实际初始化逻辑已迁移到 init() 中
+    if (!initialized) {
       await navigate('dashboard');
       initialized = true;
-      // 后台预加载模板缓存（不阻塞页面渲染）
-      ExperimentCards.preloadTemplateCache();
-      console.log('[Fasudil-LLC] 应用初始化成功');
-    } catch (err) {
-      console.error('[Fasudil-LLC] 初始化失败:', err.message);
-      UI.toast('系统初始化失败: ' + err.message, 'error', 5000);
     }
   }
 
