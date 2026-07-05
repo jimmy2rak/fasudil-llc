@@ -134,10 +134,16 @@ async function handleGetMe(request) {
   }
 }
 
+/** 退出登录：清除 Cookie 后重定向到首页（支持 GET 和 POST） */
 function handleLogout() {
-  return new Response(JSON.stringify({ success: true }), {
-    status: 200,
-    headers: setCookieHeader('auth_token=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0')
+  const headers = new Headers({
+    'Set-Cookie': 'auth_token=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0',
+    'Location': '/',
+    'Content-Type': 'text/plain; charset=utf-8'
+  });
+  return new Response('Logged out', {
+    status: 302,  // 重定向，浏览器原生跟随
+    headers
   });
 }
 
@@ -306,8 +312,8 @@ export async function onRequest(context) {
     if (segments.length === 2 && segments[0] === 'auth' && segments[1] === 'me' && method === 'GET') {
       return handleGetMe(request);
     }
-    // POST /api/auth/logout
-    if (segments.length === 2 && segments[0] === 'auth' && segments[1] === 'logout' && method === 'POST') {
+    // POST /api/auth/logout 或 GET /api/auth/logout（浏览器直接跳转）
+    if (segments.length === 2 && segments[0] === 'auth' && segments[1] === 'logout' && (method === 'POST' || method === 'GET')) {
       return handleLogout();
     }
 

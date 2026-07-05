@@ -31,12 +31,10 @@ const App = (() => {
     }
   }
 
-  /** 退出登录（EdgeOne 部署用） */
-  async function logout() {
-    try {
-      await fetch('/api/auth/logout', { method: 'POST' });
-    } catch (e) { /* 非 EdgeOne 环境忽略 */ }
-    window.location.href = '/';
+  /** 退出登录（直接跳转，让浏览器原生处理 Cookie 清除） */
+  function logout() {
+    // 直接导航到注销 URL，浏览器原生处理 Set-Cookie 后重定向回首页
+    window.location.href = '/api/auth/logout';
   }
 
   // --- 路由 ---
