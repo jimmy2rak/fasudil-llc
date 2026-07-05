@@ -511,7 +511,7 @@ const ExperimentCards = (() => {
         { id:'rowTotal',  label:'本行总重', type:'computed', width:'65px', order:7,
           formula:'spc+gmo+nmp+water+etoh+dopg', formulaDescription:'SPC+GMO+NMP+水+EtOH+DOPG-Na之和' },
         { id:'drugAmount', label:'本行加入药量', type:'number', unit:'mg', width:'85px', order:8, default:0 },
-        { id:'density', label:'密度', type:'number', unit:'mg/ml', width:'70px', order:9, default:0 },
+        { id:'density', label:'密度', type:'number', unit:'g/ml', width:'70px', order:9, default:0 },
         { id:'drugConc',   label:'本行载药浓度', type:'computed', width:'95px', order:10,
           formula:'drugAmount/(rowTotal*1000+drugAmount)/density',
           formulaDescription:'本行加入药量 ÷ (本行总重×1000 + 本行加入药量) ÷ 密度' },

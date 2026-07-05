@@ -83,7 +83,7 @@ const BUILTIN_TEMPLATE = {
     { id:'dopg',  label:'DOPG-Na(g)',type:'number', order:6, default:0 },
     { id:'rowTotal',  label:'本行总重(g)', type:'computed', order:7, formula:'spc+gmo+nmp+water+etoh+dopg' },
     { id:'drugAmount', label:'本行加入药量(mg)', type:'number', order:8, default:0 },
-    { id:'density', label:'密度(mg/ml)', type:'number', order:9, default:0 },
+    { id:'density', label:'密度(g/ml)', type:'number', order:9, default:0 },
     { id:'drugConc', label:'本行载药浓度(mg/ml)', type:'computed', order:10,
       formula:'drugAmount/(rowTotal*1000+drugAmount)/density' },
     { id:'takeVolume', label:'取用体积(μL)', type:'number', order:11, default:0 },
@@ -319,7 +319,7 @@ function updateDisplay() {
     <div class="test-row">
       <div class="test-item">本行总重: <strong>${isNaN(rowTotal)?'—':rowTotal.toFixed(2)} g</strong></div>
       <div class="test-item">药量: <strong>${isNaN(drugAmt)?'—':drugAmt.toFixed(2)} mg</strong></div>
-      <div class="test-item">密度: <strong>${isNaN(density)?'—':density.toFixed(2)} mg/ml</strong></div>
+      <div class="test-item">密度: <strong>${isNaN(density)?'—':density.toFixed(2)} g/ml</strong></div>
       <div class="test-item">取用体积: <strong>${isNaN(takeVol)?'—':takeVol.toFixed(2)} μL</strong></div>
     </div>
     <div class="test-row">
