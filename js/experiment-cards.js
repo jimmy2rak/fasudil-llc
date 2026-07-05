@@ -15,12 +15,20 @@ const ExperimentCards = (() => {
     concentration(absVal) {
       return 2 * (absVal - 0.00414128) / 0.0136697;
     },
-    cumulativeRelease(concs, totalVol, sampleVol) {
+    cumulativeRelease(concs, totalVols, sampleVols) {
+      // Q_n = (C_n × V_n) / 1000 + Σ(j=1..n-1)(C_j × v_j) / 1000
+      // C: 释放液真实浓度 (ug/ml), V_n: 第n点体系体积 (ml)
+      // v_j: 第j次取样体积 (ml), ÷1000: ug→mg
       const result = [];
       for (let i = 0; i < concs.length; i++) {
+        const Vn = totalVols[i] || 10;          // 第i点体系体积 (ml)
+        const currentRelease = (concs[i] * Vn) / 1000;  // 当前点释放量 (mg)
         let sampleSum = 0;
-        for (let j = 0; j < i; j++) sampleSum += concs[j] * sampleVol;
-        result.push((concs[i] * totalVol + sampleSum) / 1000);
+        for (let j = 0; j < i; j++) {
+          const vj = sampleVols[j] || 2;        // 第j次取样体积 (ml, 默认2)
+          sampleSum += (concs[j] * vj) / 1000;  // 第j次取样释放量 (mg)
+        }
+        result.push(currentRelease + sampleSum);
       }
       return result;
     },
@@ -362,10 +370,10 @@ const ExperimentCards = (() => {
       });
     });
 
-    const totalVol = data.length > 0 ? data[0].totalVol : 30;
-    const sampleVol = data.length > 0 ? data[0].sampleVol : 2;
     const concs = data.map(r => CALC.concentration(r.absorbance));
-    const cumRelease = CALC.cumulativeRelease(concs, totalVol, sampleVol);
+    const totalVols = data.map(r => r.totalVol);
+    const sampleVols = data.map(r => r.sampleVol);
+    const cumRelease = CALC.cumulativeRelease(concs, totalVols, sampleVols);
     const drugBase = sample.expDrugAmount !== undefined ? sample.expDrugAmount : (sample.totalDrug || 0);
     const rates = CALC.releaseRate(cumRelease, drugBase);
     const finalRate = rates.length > 0 ? rates[rates.length - 1] : 0;
