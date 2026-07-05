@@ -6,11 +6,29 @@
 
 const FSManager = (() => {
 
+  /**
+   * 统一响应处理：401 时触发强制登出
+   */
+  function _handleResponse(res) {
+    if (res.status === 401) {
+      console.warn('[FSManager] 接口 401，执行强制登出');
+      // 清除所有凭证
+      try { localStorage.clear(); } catch {}
+      try { sessionStorage.clear(); } catch {}
+      document.cookie.split(';').forEach(c => {
+        document.cookie = c.replace(/^ +/, '').replace(/=.*/, `=; expires=${new Date(0).toUTCString()}; path=/`);
+      });
+      window.location.replace('/');
+      throw new Error('登录已过期，请重新登录');
+    }
+    return res;
+  }
+
   // --- 通用 API 调用 ---
 
   /** 获取某类型全部数据 */
   async function apiList(type) {
-    const res = await fetch(`/api/data/${type}`);
+    const res = _handleResponse(await fetch(`/api/data/${type}`));
     if (!res.ok) throw new Error(`API 请求失败: ${res.status}`);
     const data = await res.json();
     return data.items || [];
@@ -18,7 +36,7 @@ const FSManager = (() => {
 
   /** 获取单条数据 */
   async function apiGet(type, key) {
-    const res = await fetch(`/api/data/${type}/${key}`);
+    const res = _handleResponse(await fetch(`/api/data/${type}/${key}`));
     if (!res.ok) {
       if (res.status === 404) return null;
       throw new Error(`API 请求失败: ${res.status}`);
@@ -29,29 +47,29 @@ const FSManager = (() => {
 
   /** 创建/覆盖数据 */
   async function apiPut(type, key, value) {
-    const res = await fetch(`/api/data/${type}`, {
+    const res = _handleResponse(await fetch(`/api/data/${type}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ key, value })
-    });
+    }));
     if (!res.ok) throw new Error(`API 写入失败: ${res.status}`);
     return res.json();
   }
 
   /** 更新数据 */
   async function apiUpdate(type, key, value) {
-    const res = await fetch(`/api/data/${type}/${key}`, {
+    const res = _handleResponse(await fetch(`/api/data/${type}/${key}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ value })
-    });
+    }));
     if (!res.ok) throw new Error(`API 更新失败: ${res.status}`);
     return res.json();
   }
 
   /** 删除数据 */
   async function apiDelete(type, key) {
-    const res = await fetch(`/api/data/${type}/${key}`, { method: 'DELETE' });
+    const res = _handleResponse(await fetch(`/api/data/${type}/${key}`, { method: 'DELETE' }));
     if (!res.ok) throw new Error(`API 删除失败: ${res.status}`);
     return res.json();
   }

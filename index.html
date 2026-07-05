@@ -7,8 +7,33 @@
   <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
-  <!-- ======== 主应用界面（已移除引导页） ======== -->
-  <div id="app-main" class="app-main">
+  <!-- ======== 登录页 ======== -->
+  <div id="login-screen" class="login-screen">
+    <div class="login-card">
+      <div class="login-logo">
+        <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+          <circle cx="24" cy="24" r="20" fill="#0d7377" opacity="0.12"/>
+          <path d="M24 8 L24 40 M8 24 L40 24" stroke="#0d7377" stroke-width="2" stroke-linecap="round"/>
+          <circle cx="24" cy="24" r="8" fill="#1e3a5f" opacity="0.2" stroke="#1e3a5f" stroke-width="1"/>
+          <circle cx="24" cy="24" r="3" fill="#0d7377"/>
+        </svg>
+      </div>
+      <h1 class="login-title">Fasudil-LLC Analyzer</h1>
+      <p class="login-subtitle">盐酸法舒地尔缓释制剂 · 数据分析系统</p>
+
+      <div id="login-form-container" class="login-form-container">
+        <!-- 由 js/ui.js 的 renderLoginForm() 动态渲染 -->
+      </div>
+
+      <div id="login-status" class="login-status" style="display:none">
+        <div class="spinner"></div>
+        <p id="login-status-msg">正在登录...</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======== 主应用界面 ======== -->
+  <div id="app-main" class="app-main" style="display:none">
     <!-- 顶部栏 -->
     <header class="app-header">
       <div class="header-brand">
@@ -69,12 +94,6 @@
           <span>设置</span>
         </li>
       </ul>
-      <div class="sidebar-footer">
-        <div class="sidebar-info">
-          <span class="info-label">数据目录</span>
-          <span id="sidebar-dir-name" class="info-value">未连接</span>
-        </div>
-      </div>
     </nav>
 
     <!-- 主内容区 -->

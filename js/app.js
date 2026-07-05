@@ -1,27 +1,126 @@
 /* ========================================
-   app.js — 应用入口、路由、状态管理
-   页面渲染、上传处理、实验管理
+   app.js — 应用入口、路由、状态管理 (EdgeOne 版)
+   含全局 401 拦截、登出凭证清除、前置鉴权
    ======================================== */
 
 const App = (() => {
   let currentPage = 'dashboard';
   let experimentsCache = [];
   let initialized = false;
-  let _parsedFiles = {}; // 缓存解析结果，供保存到实验时使用
+  let _parsedFiles = {};
   let _lastUploadFileName = '';
 
-  // --- 启动流程（已移除引导页，直接进入主应用） ---
+  // ============================================================
+  // 全局 API 请求封装（自动处理 401 登出）
+  // ============================================================
+
+  /**
+   * 统一的 API fetch 封装
+   * - 捕获 401 → 自动执行登出流程
+   * - 添加无缓存请求头
+   */
+  async function apiFetch(url, options = {}) {
+    try {
+      const res = await fetch(url, {
+        credentials: 'same-origin',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          ...(options.headers || {})
+        },
+        ...options
+      });
+
+      // 401 拦截：自动登出
+      if (res.status === 401) {
+        console.warn('[Auth] 接口 401 未授权，执行强制登出');
+        forceLogout();
+        return null;
+      }
+
+      return res;
+    } catch (err) {
+      console.error('[API] 请求失败:', url, err.message);
+      throw err;
+    }
+  }
+
+  /**
+   * 强制登出：清除所有凭证 → 跳转登录页
+   */
+  function forceLogout() {
+    // 1. 清空 LocalStorage
+    try {
+      localStorage.clear();
+    } catch (e) {}
+
+    // 2. 清空 SessionStorage
+    try {
+      sessionStorage.clear();
+    } catch (e) {}
+
+    // 3. 清空所有 Cookie
+    document.cookie.split(';').forEach(c => {
+      document.cookie = c.replace(/^ +/, '')
+        .replace(/=.*/, `=; expires=${new Date(0).toUTCString()}; path=/`);
+    });
+
+    // 4. 标记内存状态
+    initialized = false;
+
+    // 5. 硬跳转到登录页
+    window.location.replace('/');
+  }
+
+  // ============================================================
+  // 启动流程：前置鉴权 → 登录页 / 主应用
+  // ============================================================
+
   async function init() {
     console.log('[Fasudil-LLC] App.init()');
-    await enterMainApp();
+
+    try {
+      const res = await fetch('/api/auth/me', {
+        credentials: 'same-origin',
+        headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
+      });
+
+      if (res.ok) {
+        // 已登录 → 进入主应用
+        await enterMainApp();
+      } else {
+        // 未登录 → 显示登录页
+        showLoginScreen();
+      }
+    } catch (err) {
+      console.error('[Fasudil-LLC] 登录检查失败:', err.message);
+      showLoginScreen();
+    }
+  }
+
+  /** 显示登录页 */
+  function showLoginScreen() {
+    const loginScreen = document.getElementById('login-screen');
+    const appMain = document.getElementById('app-main');
+    if (loginScreen) loginScreen.style.display = 'flex';
+    if (appMain) appMain.style.display = 'none';
+
+    const container = document.getElementById('login-form-container');
+    if (container) {
+      UI.renderLoginForm(container);
+    }
   }
 
   /** 进入主应用 */
   async function enterMainApp() {
+    // 切换 UI
+    const loginScreen = document.getElementById('login-screen');
+    const appMain = document.getElementById('app-main');
+    if (loginScreen) loginScreen.style.display = 'none';
+    if (appMain) appMain.style.display = 'block';
+
     try {
-      // 加载规则
       try { await ML.loadRules(); } catch (e) { console.warn('加载规则失败:', e.message); }
-      // 进入首页
       await navigate('dashboard');
       initialized = true;
       console.log('[Fasudil-LLC] 应用初始化成功');
@@ -31,10 +130,33 @@ const App = (() => {
     }
   }
 
-  /** 退出登录（直接跳转，让浏览器原生处理 Cookie 清除） */
+  // ============================================================
+  // 退出登录（完整清除 + 强制跳转）
+  // ============================================================
+
+  /**
+   * 退出登录：优先清空所有本地凭证，再跳转后端注销
+   */
   function logout() {
-    // 直接导航到注销 URL，浏览器原生处理 Set-Cookie 后重定向回首页
-    window.location.href = '/api/auth/logout';
+    console.log('[Auth] 执行退出登录');
+
+    // 1. 立即清空前端所有存储（防止跳转过程中残留）
+    try { localStorage.clear(); } catch (e) {}
+    try { sessionStorage.clear(); } catch (e) {}
+
+    // 2. 清除所有 Cookie
+    document.cookie.split(';').forEach(c => {
+      document.cookie = c.replace(/^ +/, '')
+        .replace(/=.*/, `=; expires=${new Date(0).toUTCString()}; path=/`);
+    });
+
+    // 3. 清除内存状态
+    initialized = false;
+    experimentsCache = [];
+
+    // 4. 跳转后端注销（清除 HTTP-only Cookie）+ 重定向到首页
+    //    浏览器原生处理 302 → Set-Cookie → Location: /
+    window.location.replace('/api/auth/logout');
   }
 
   // --- 路由 ---
