@@ -108,7 +108,7 @@ const ExperimentCards = (() => {
           <div class="sample-card-title-row">
             <div class="sample-card-badge">${sample.id}</div>
             <div class="sample-card-title">${sample.formulation || '—'}</div>
-            <span class="tag tag-teal">总药量 ${(sample.expDrugAmount || sample.totalDrug).toFixed(1)} mg</span>
+            <span class="tag tag-teal">总药量 ${((sample.expDrugAmount !== undefined ? sample.expDrugAmount : (sample.totalDrug || 0))).toFixed(1)} mg</span>
           </div>
           <div class="sample-card-actions-top">
             <button class="btn btn-sm btn-primary" onclick="ExperimentCards.analyzeSample('${expId}','${sample.id}')">一键分析所有数据</button>
@@ -202,7 +202,7 @@ const ExperimentCards = (() => {
                 <tr><td>最终累计释放率</td><td id="calc-final-${domId}"><strong>${(sample.finalRate||0).toFixed(2)}%</strong></td><td>${sample.id} 终点释放百分比</td></tr>
                 <tr><td>残留率</td><td id="calc-residual-${domId}"><strong>${(sample.residualRate||0).toFixed(2)}%</strong></td><td>制剂中残余药量百分比</td></tr>
                 <tr><td>总回收率</td><td id="calc-total-${domId}"><strong>${(sample.totalRecovery||0).toFixed(2)}%</strong></td><td>释放率 + 残留率</td></tr>
-                <tr><td>总药量</td><td>${(sample.expDrugAmount || sample.totalDrug).toFixed(2)} mg</td><td>理论载药量</td></tr>
+                <tr><td>总药量</td><td>${((sample.expDrugAmount !== undefined ? sample.expDrugAmount : (sample.totalDrug || 0))).toFixed(2)} mg</td><td>理论载药量</td></tr>
               </tbody></table>
               <div style="margin-top:8px;text-align:right;display:flex;gap:8px;justify-content:flex-end">
                 <button class="btn btn-sm btn-primary" onclick="ExperimentCards.analyzeSample('${expId}','${sample.id}')">一键分析</button>
@@ -249,7 +249,7 @@ const ExperimentCards = (() => {
     return `<div class="overview-grid">
       <div class="overview-item"><span class="overview-label">样品编号</span><span class="overview-value">${sample.id}</span></div>
       <div class="overview-item"><span class="overview-label">所属处方</span><span class="overview-value">${sample.formulation||'—'}</span></div>
-      <div class="overview-item"><span class="overview-label">总药量</span><span class="overview-value">${(sample.expDrugAmount || sample.totalDrug).toFixed(2)} mg</span></div>
+      <div class="overview-item"><span class="overview-label">总药量</span><span class="overview-value">${((sample.expDrugAmount !== undefined ? sample.expDrugAmount : (sample.totalDrug || 0))).toFixed(2)} mg</span></div>
       <div class="overview-item highlight"><span class="overview-label">最终累计释放率</span><span class="overview-value">${(sample.finalRate||0).toFixed(2)}%</span></div>
       <div class="overview-item highlight"><span class="overview-label">残留率</span><span class="overview-value">${(sample.residualRate||0).toFixed(2)}%</span></div>
       <div class="overview-item highlight"><span class="overview-label">总回收率</span><span class="overview-value">${(sample.totalRecovery||0).toFixed(2)}%</span></div>
@@ -366,7 +366,8 @@ const ExperimentCards = (() => {
     const sampleVol = data.length > 0 ? data[0].sampleVol : 2;
     const concs = data.map(r => CALC.concentration(r.absorbance));
     const cumRelease = CALC.cumulativeRelease(concs, totalVol, sampleVol);
-    const rates = CALC.releaseRate(cumRelease, (sample.expDrugAmount || sample.totalDrug));
+    const drugBase = sample.expDrugAmount !== undefined ? sample.expDrugAmount : (sample.totalDrug || 0);
+    const rates = CALC.releaseRate(cumRelease, drugBase);
     const finalRate = rates.length > 0 ? rates[rates.length - 1] : 0;
 
     // 更新表格
@@ -510,10 +511,10 @@ const ExperimentCards = (() => {
         { id:'rowTotal',  label:'本行总重', type:'computed', width:'65px', order:7,
           formula:'spc+gmo+nmp+water+etoh+dopg', formulaDescription:'SPC+GMO+NMP+水+EtOH+DOPG-Na之和' },
         { id:'drugAmount', label:'本行加入药量', type:'number', unit:'mg', width:'85px', order:8, default:0 },
-        { id:'drugConc',   label:'本行载药浓度', type:'dynamic', width:'95px', order:9,
+        { id:'density', label:'密度', type:'number', unit:'mg/ml', width:'70px', order:9, default:0 },
+        { id:'drugConc',   label:'本行载药浓度', type:'dynamic', width:'95px', order:10,
           modes:[{ id:'manual', label:'手动输入' }, { id:'formula', label:'公式计算' }],
           defaultMode:'formula', defaultFormula:'drugAmount/(rowTotal*1000+drugAmount)/density' },
-        { id:'density', label:'密度', type:'number', unit:'mg/ml', width:'70px', order:10, default:0 },
         { id:'takeVolume', label:'取用体积', type:'number', unit:'μL', width:'70px', order:11, default:0 },
         { id:'expDrugAmount', label:'实验药量', type:'computed', width:'75px', order:12,
           formula:'drugConc*takeVolume/1000', formulaDescription:'载药浓度×取用体积÷1000' },
@@ -665,13 +666,23 @@ const ExperimentCards = (() => {
     }
   }
 
-  /** 输入变化时实时重新计算所有 computed 列 */
+  /** 输入变化时实时重新计算所有列（严格三步顺序） */
   function onCellChange() {
     const tbody = document.getElementById('create-form-tbody');
     if (!tbody) return;
     tbody.querySelectorAll('tr.form-row-entry').forEach(tr => {
-      // 第一步：先计算载药浓度公式（如果为 formula 模式）
-      // 这样 expDrugAmount 公式能读取到最新计算的 drugConc 值
+      // 第一步：计算「本行总重」等不依赖 drugConc 的 computed 列
+      // (rowTotal: spc+gmo+nmp+water+etoh+dopg)
+      tr.querySelectorAll('[data-formula]').forEach(el => {
+        if (el.dataset.field === 'expDrugAmount') return; // 实验药量最后算
+        const formula = el.dataset.formula;
+        if (formula) {
+          const result = _evaluateFormula(formula, tr);
+          el.textContent = result.toFixed(2);
+        }
+      });
+
+      // 第二步：计算「本行载药浓度」（依赖 rowTotal，所以第一步先算）
       const modeEl = tr.querySelector('[data-field="drugConc-mode"]');
       if (modeEl && modeEl.value === 'formula') {
         const concInput = tr.querySelector('[data-field="drugConc"]');
@@ -685,18 +696,14 @@ const ExperimentCards = (() => {
         }
       }
 
-      // 第二步：计算所有 computed 列（包括 expDrugAmount）
-      // expDrugAmount 公式 drugConc*takeVolume/1000 会读取最新的 drugConc 值
-      tr.querySelectorAll('[data-formula]').forEach(el => {
-        const formula = el.dataset.formula;
-        if (formula) {
-          const result = _evaluateFormula(formula, tr);
-          el.textContent = result.toFixed(2);
-        }
-      });
+      // 第三步：计算「实验药量」（依赖 drugConc，所以第二步先算）
+      const expEl = tr.querySelector('[data-field="expDrugAmount"]');
+      if (expEl && expEl.dataset.formula) {
+        const result = _evaluateFormula(expEl.dataset.formula, tr);
+        expEl.textContent = result.toFixed(2);
+      }
 
-      // 第三步：对空值/NaN 容错处理
-      // 所有 computed 列如果为 NaN 显示 0.00
+      // 容错：所有 computed 列如果为 NaN 显示 0.00
       tr.querySelectorAll('[data-formula]').forEach(el => {
         const val = parseFloat(el.textContent);
         if (isNaN(val)) el.textContent = '0.00';

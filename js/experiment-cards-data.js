@@ -72,12 +72,17 @@ const ExperimentData = (() => {
 
       const rowConcMode = rowData.drugConcMode || data.drugConcMode || 'manual';
 
-      // 新增字段兼容兜底
+      // 新增字段：密度、取用体积、实验药量
       const rowDensity = parseFloat(rowData.density) || 0;
       const rowTakeVolume = parseFloat(rowData.takeVolume) || 0;
       const rowExpDrugAmount = parseFloat(rowData.expDrugAmount) || 0;
 
-      // 【修复】取消自动平分：每个样品使用完整实验药量，不再均分
+      // 强制使用实验药量作为单样品总药量（新旧兼容：检测字段是否存在）
+      // 新实验 rowData.expDrugAmount 始终有值 → totalDrug = 计算出的实验药量
+      // 旧实验 rowData.expDrugAmount 无定义 → totalDrug = rowDrugAmount 降级
+      const sampleTotalDrug = rowData.expDrugAmount !== undefined ? rowExpDrugAmount : rowDrugAmount;
+
+      // 【取消平分】每个样品使用完整实验药量，不复数均分
       for (const sid of (f.samples || [])) {
         const sample = {
           id: sid,
@@ -85,8 +90,7 @@ const ExperimentData = (() => {
           formulation: f.name,
           formulationComponents: f.components,
           formulationTotal: f.total,
-          // 【修复】使用实验药量(mg)作为单个样品总药量基数，不再使用均分的 perSampleDrug
-          totalDrug: rowExpDrugAmount > 0 ? rowExpDrugAmount : rowDrugAmount,
+          totalDrug: sampleTotalDrug,
           density: rowDensity,
           takeVolume: rowTakeVolume,
           expDrugAmount: rowExpDrugAmount,
@@ -155,12 +159,15 @@ const ExperimentData = (() => {
         ? parseFloat(rowData.drugAmount) || 0
         : (parseFloat(data.totalDrug) || 0) * (f.samples || []).length;
 
-      // 新增字段兼容兜底
+      // 新增字段：密度、取用体积、实验药量
       const rowExpDrugAmount = parseFloat(rowData.expDrugAmount) || 0;
       const rowDensity = parseFloat(rowData.density) || 0;
       const rowTakeVolume = parseFloat(rowData.takeVolume) || 0;
 
-      // 【修复】取消自动平分：每个样品使用完整实验药量
+      // 强制使用实验药量作为单样品总药量
+      const sampleTotalDrug = rowData.expDrugAmount !== undefined ? rowExpDrugAmount : rowDrugAmount;
+
+      // 【取消平分】每个样品使用完整实验药量，不复数均分
       for (const sid of (f.samples || [])) {
         const sample = {
           id: sid,
@@ -168,8 +175,7 @@ const ExperimentData = (() => {
           formulation: f.name,
           formulationComponents: f.components,
           formulationTotal: f.total,
-          // 【修复】使用实验药量作为单样品总药量基数
-          totalDrug: rowExpDrugAmount > 0 ? rowExpDrugAmount : rowDrugAmount,
+          totalDrug: sampleTotalDrug,
           density: rowDensity,
           takeVolume: rowTakeVolume,
           expDrugAmount: rowExpDrugAmount,
@@ -315,8 +321,10 @@ const ExperimentData = (() => {
       if (extraData.expDrugAmount !== undefined) formulation.perRowExpDrugAmount = extraData.expDrugAmount;
     }
 
-    // 更新关联样品的 totalDrug（使用实验药量，不复数均分）
-    const expDrug = formulation.perRowExpDrugAmount || drugAmount;
+    // 更新关联样品的 totalDrug（强制使用实验药量，不复数均分，不降级回 rowDrugAmount）
+    const expDrug = formulation.perRowExpDrugAmount !== undefined
+      ? formulation.perRowExpDrugAmount
+      : drugAmount;
     for (const sample of group.samples) {
       if (sample.formulation === formulation.name) {
         sample.totalDrug = expDrug;

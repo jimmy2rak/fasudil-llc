@@ -365,7 +365,7 @@ const App = (() => {
             for (let j = 0; j < i; j++) ss += concs[j] * sv;
             cum.push((concs[i] * tv + ss) / 1000);
           }
-          const rates = cum.map(c => (c / (s.expDrugAmount || s.totalDrug)) * 100);
+          const rates = cum.map(c => (c / (s.expDrugAmount !== undefined ? s.expDrugAmount : (s.totalDrug || 0))) * 100);
           finalRate = rates.length > 0 ? rates[rates.length - 1] : 0;
         }
         if (finalRate > 0) { totalFinalRate += finalRate; rateCount++; }
@@ -508,7 +508,7 @@ const App = (() => {
             for (let j = 0; j < i; j++) ss += concs[j] * sv;
             cum.push((concs[i] * tv + ss) / 1000);
           }
-          const rates = cum.map(c => (c / (sample.expDrugAmount || sample.totalDrug)) * 100);
+          const rates = cum.map(c => (c / (sample.expDrugAmount !== undefined ? sample.expDrugAmount : (sample.totalDrug || 0))) * 100);
           return rates.length > 0 ? rates[rates.length - 1] : 0;
         };
 
@@ -604,7 +604,8 @@ const App = (() => {
         for (let j = 0; j < i; j++) ss += concs[j] * 2;
         cum.push((concs[i] * 30 + ss) / 1000);
       }
-      finalRate = absVals.length > 0 ? (cum[cum.length-1] / (sample.expDrugAmount || sample.totalDrug || 3.43)) * 100 : 0;
+      const totalBase = sample.expDrugAmount !== undefined ? sample.expDrugAmount : (sample.totalDrug || 3.43);
+      finalRate = absVals.length > 0 ? (cum[cum.length-1] / totalBase) * 100 : 0;
     }
     const html = `<div style="background:var(--color-bg-secondary);border-radius:8px;padding:16px;margin-bottom:12px"><div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px"><div><strong>文件:</strong> ${fileName}</div><div><strong>数据行数:</strong> ${absVals.length}</div><div><strong>估计释放率:</strong> ${finalRate.toFixed(2)}%</div></div></div><div style="font-size:13px;color:var(--color-text-secondary)"><p>• 文件包含 ${absVals.length} 数据点，估计释放率 ${finalRate.toFixed(2)}%。</p><p>• 通过「保存到实验」导入后进行完整 Skill 分析。</p></div>`;
     UI.showModal(`Skill 分析 — ${fileName}`, `<div style="max-height:500px;overflow-y:auto">${html}</div>`, `<button class="btn btn-primary btn-sm" onclick="UI.hideModal();App.showSaveToExperiment('${fileName}')">📥 保存到实验</button><button class="btn btn-secondary btn-sm" onclick="UI.hideModal()">关闭</button>`);
@@ -828,7 +829,7 @@ const App = (() => {
         formulation: formName,
         formulationComponents: formObj ? (formObj.components || {}) : {},
         formulationTotal: formObj ? (formObj.total || 0) : 0,
-        totalDrug: formObj ? (formObj.perRowExpDrugAmount || exp.drugAmount || 3.43) : (exp.drugAmount || 3.43),
+        totalDrug: formObj ? (formObj.perRowExpDrugAmount !== undefined ? formObj.perRowExpDrugAmount : (exp.drugAmount || 3.43)) : (exp.drugAmount || 3.43),
         group: exp.name,
         timePoints: [], absorbance: [], sampleVols: [], totalVols: [],
         concentration: [], cumulativeRelease: [], releaseRate: [],
@@ -1011,7 +1012,7 @@ const App = (() => {
       html += '<th>编号</th><th>所属处方</th><th>总药量 (mg)</th><th>所属实验组</th><th>释放率</th><th>残留率</th><th>回收率</th><th>操作</th></tr></thead><tbody>';
       for (const s of allSamples) {
         html += `<tr>
-          <td><strong>${s.id}</strong></td><td>${s.formulation||'—'}</td><td>${((s.expDrugAmount || s.totalDrug)||0).toFixed(2)}</td><td>${s.expName||'—'}</td>
+          <td><strong>${s.id}</strong></td><td>${s.formulation||'—'}</td><td>${((s.expDrugAmount !== undefined ? s.expDrugAmount : (s.totalDrug || 0))||0).toFixed(2)}</td><td>${s.expName||'—'}</td>
           <td>${(s.finalRate||0).toFixed(2)}%</td><td>${(s.residualRate||0).toFixed(2)}%</td><td>${(s.totalRecovery||0).toFixed(2)}%</td>
           <td><button class="btn btn-sm btn-primary" onclick="App.viewExperimentCards('${s.expId}')">查看</button></td>
         </tr>`;
