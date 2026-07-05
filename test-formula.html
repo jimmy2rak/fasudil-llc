@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-<head><meta charset="UTF-8"><title>处方表格计算测试</title>
+<head><meta charset="UTF-8"><title>处方表格计算测试 v2</title>
 <style>
   body{font-family:system-ui,sans-serif;max-width:1200px;margin:0 auto;padding:20px;background:#f5f7fa}
   h1{font-size:18px;color:#1e3a5f;margin-bottom:4px}
@@ -11,8 +11,7 @@
   td{padding:6px 2px;border-bottom:1px solid #e8ecf2;text-align:center}
   input{width:60px;padding:4px 6px;border:1px solid #d8dce6;border-radius:4px;font-size:12px;text-align:center;box-sizing:border-box}
   input:focus{border-color:#0d7377;outline:none}
-  input.computed{background:#f0f4f8;border-color:#e0e4ea;color:#5a6275;cursor:default}
-  input.computed:focus{border-color:#d8dce6}
+  .computed-span{display:inline-block;min-width:50px;padding:4px 6px;font-size:12px;color:#5a6275;background:#f0f4f8;border-radius:4px;font-weight:600}
   .result{font-size:12px;color:#0d7377;font-weight:600;padding:4px 8px}
   .pass{color:#27ae60;font-weight:700}
   .fail{color:#e74c3c;font-weight:700}
@@ -22,178 +21,241 @@
   .test-item{font-size:12px;color:#5a6275}
   .test-item strong{color:#1a1a2e}
   .note{font-size:11px;color:#8c94a6;margin-top:8px;background:#f8fafc;padding:8px 12px;border-radius:4px;border-left:3px solid #0d7377}
+  .log-panel{background:#1a1a2e;color:#a8e6cf;font-family:monospace;font-size:11px;padding:12px;border-radius:6px;margin-top:12px;max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
+  .log-panel .log-step{color:#ffd93d}
+  .log-panel .log-ok{color:#6bcb77}
+  .log-panel .log-err{color:#ff6b6b}
   select{font-size:11px;padding:3px 4px;border:1px solid #d8dce6;border-radius:3px}
+  button{padding:5px 14px;font-size:12px;cursor:pointer;border-radius:4px;border:1px solid #d8dce6;background:#fff}
+  button:hover{background:#eef2f7}
+  .btn-primary{background:#0d7377;color:#fff;border-color:#0d7377}
+  .btn-primary:hover{background:#0a5c5f}
 </style>
 </head>
 <body>
 
-<h1>🧪 处方表格计算测试</h1>
-<div class="sub">离线测试页面 — 无需数据库/验证码/后端</div>
+<h1>🧪 处方表格计算测试 v2</h1>
+<div class="sub">离线测试 — 无需后端/数据库 · 内置 console.log 调试 · 全部用 <span> 替代 input</div>
 
 <table id="form-table">
   <thead id="table-head"></thead>
   <tbody id="table-body"></tbody>
 </table>
 
-<div class="note">
-  <strong>操作说明：</strong>修改任意输入框数值（白底），计算列（灰底）自动刷新。<br>
-  填入 SPC=0.5, GMO=0.3, NMP=0.1, 水=0.05, EtOH=0.03, DOPG-Na=0.02, 本行加入药量=90, 密度=1.2, 取用体积=500<br>
-  预期结果：本行总重=1.00g | 载药浓度=0.0688mg/ml | 实验药量=0.0344mg
+<div style="margin-top:10px;display:flex;gap:8px">
+  <button class="btn-primary" onclick="fillTestData()">填入测试数据</button>
+  <button onclick="addRow()">+ 添加处方行</button>
+  <button onclick="forceRecalcAll()">🔄 强制重算全部行</button>
+  <button onclick="document.getElementById('log-panel').textContent=''" style="color:#e74c3c">清空日志</button>
 </div>
 
-<div class="test-panel" id="test-results">
-  <h3>📋 自测结果</h3>
-  <div id="test-output">等待填入数据后自动检测...</div>
+<div class="note">
+  <strong>测试方法：</strong>手动逐个填入 SPC=0.5, GMO=0.3, NMP=0.1, 水=0.05, EtOH=0.03, DOPG-Na=0.02, 药量=90, 密度=1.2, 取用体积=500<br>
+  <strong>预期结果：</strong>本行总重=1.00g | 载药浓度=0.0688mg/ml | 实验药量=0.0344mg<br>
+  <strong>⚠️ 每次修改任意输入框后</strong>观察下方"当前值"是否自动更新。打开浏览器控制台(F12)查看详细计算日志。
 </div>
+
+<div class="test-panel">
+  <h3>📋 当前值 <span id="auto-status" style="font-size:11px;font-weight:400;color:#8c94a6">(等待输入...)</span></h3>
+  <div id="current-values">
+    <span style="color:#8c94a6">填入数据后自动显示...</span>
+  </div>
+</div>
+
+<div class="test-panel" style="margin-top:12px">
+  <h3>📋 自测结果</h3>
+  <div id="test-output"><span style="color:#8c94a6">⏳ 填入数据后自动检测...</span></div>
+</div>
+
+<div class="log-panel" id="log-panel">等待操作...</div>
 
 <script>
-// ========== 模板列定义（与内置默认模板完全一致） ==========
+// ========== 模板列定义 ==========
 const BUILTIN_TEMPLATE = {
-  id: '_builtin_default',
-  name: '默认处方模板',
+  id: '_builtin_default', name: '默认处方模板',
   columns: [
-    { id:'formulationName', label:'处方名称',     type:'text',    width:'90px',  order:0, default:'' },
-    { id:'spc',   label:'SPC',    type:'number', unit:'g',  width:'65px', order:1, default:0 },
-    { id:'gmo',   label:'GMO',    type:'number', unit:'g',  width:'65px', order:2, default:0 },
-    { id:'nmp',   label:'NMP',    type:'number', unit:'g',  width:'65px', order:3, default:0 },
-    { id:'water', label:'水',      type:'number', unit:'g',  width:'55px', order:4, default:0 },
-    { id:'etoh',  label:'EtOH',   type:'number', unit:'g',  width:'65px', order:5, default:0 },
-    { id:'dopg',  label:'DOPG-Na',type:'number', unit:'g',  width:'75px', order:6, default:0 },
-    { id:'rowTotal',  label:'本行总重', type:'computed', width:'65px', order:7,
-      formula:'spc+gmo+nmp+water+etoh+dopg' },
-    { id:'drugAmount', label:'本行加入药量', type:'number', unit:'mg', width:'85px', order:8, default:0 },
-    { id:'density', label:'密度', type:'number', unit:'mg/ml', width:'70px', order:9, default:0 },
-    { id:'drugConc',   label:'本行载药浓度', type:'dynamic', width:'95px', order:10,
+    { id:'formulationName', label:'处方名称',     type:'text',    order:0, default:'' },
+    { id:'spc',   label:'SPC(g)',    type:'number', order:1, default:0 },
+    { id:'gmo',   label:'GMO(g)',    type:'number', order:2, default:0 },
+    { id:'nmp',   label:'NMP(g)',    type:'number', order:3, default:0 },
+    { id:'water', label:'水(g)',      type:'number', order:4, default:0 },
+    { id:'etoh',  label:'EtOH(g)',   type:'number', order:5, default:0 },
+    { id:'dopg',  label:'DOPG-Na(g)',type:'number', order:6, default:0 },
+    { id:'rowTotal',  label:'本行总重(g)', type:'computed', order:7, formula:'spc+gmo+nmp+water+etoh+dopg' },
+    { id:'drugAmount', label:'本行加入药量(mg)', type:'number', order:8, default:0 },
+    { id:'density', label:'密度(mg/ml)', type:'number', order:9, default:0 },
+    { id:'drugConc', label:'本行载药浓度(mg/ml)', type:'dynamic', order:10,
       modes:[{ id:'manual', label:'手动输入' }, { id:'formula', label:'公式计算' }],
       defaultMode:'formula', defaultFormula:'drugAmount/(rowTotal*1000+drugAmount)/density' },
-    { id:'takeVolume', label:'取用体积', type:'number', unit:'μL', width:'70px', order:11, default:0 },
-    { id:'expDrugAmount', label:'实验药量', type:'computed', width:'75px', order:12,
-      formula:'drugConc*takeVolume/1000' },
-    { id:'samples', label:'对应样品', type:'text', width:'115px', order:13, default:'' },
+    { id:'takeVolume', label:'取用体积(μL)', type:'number', order:11, default:0 },
+    { id:'expDrugAmount', label:'实验药量(mg)', type:'computed', order:12, formula:'drugConc*takeVolume/1000' },
+    { id:'samples', label:'对应样品', type:'text', order:13, default:'' },
   ]
 };
 
 let currentColumns = BUILTIN_TEMPLATE.columns;
 
-// ========== 公式计算引擎 ==========
+// ========== 日志 ==========
+function log(msg, type='info') {
+  const panel = document.getElementById('log-panel');
+  const prefix = type === 'step' ? '🔷' : type === 'ok' ? '✅' : type === 'err' ? '❌' : 'ℹ️';
+  const cls = type === 'step' ? 'log-step' : type === 'ok' ? 'log-ok' : type === 'err' ? 'log-err' : '';
+  panel.innerHTML += `<span class="${cls}">${prefix} ${msg}</span>\n`;
+  panel.scrollTop = panel.scrollHeight;
+  console.log(`[FormulaTest] ${prefix} ${msg}`);
+}
+
+// ========== 公式引擎 ==========
 function _evaluateFormula(formula, tr) {
-  if (!formula) return 0;
+  if (!formula) { log('公式为空', 'err'); return 0; }
   try {
     let resolved = formula;
     resolved = resolved.replace(/([a-zA-Z_]\w*)/g, (match) => {
-      if (/^\d+\.?\d*$/.test(match)) return match;
+      if (/^\d+\.?\d*$/.test(match)) { log(`  变量: ${match} → 数字字面量`, 'info'); return match; }
       if (['true','false','null','undefined','NaN','Infinity'].includes(match)) return match;
       if (/^[\d+\-*/()., ]+$/.test(match)) return match;
       const el = tr.querySelector(`[data-field="${match}"]`);
       if (el) {
-        const val = parseFloat(el.value !== undefined ? el.value : el.textContent);
+        const raw = el.value !== undefined ? el.value : el.textContent;
+        const val = parseFloat(raw);
+        log(`  变量: ${match} → "${raw}" → ${isNaN(val)?'NaN':val}`, 'info');
         return isNaN(val) ? '0' : String(val);
       }
+      log(`  变量: ${match} → 未找到DOM元素, 用0`, 'err');
       return '0';
     });
+    log(`  解析后: ${resolved}`, 'info');
     const fn = new Function('return (' + resolved + ')');
     const result = fn();
+    log(`  结果: ${result} (${isNaN(result)?'NaN':result.toFixed(4)})`, isNaN(result)?'err':'ok');
     return isNaN(result) ? 0 : result;
-  } catch {
+  } catch(e) {
+    log(`公式异常: ${e.message}`, 'err');
     return 0;
   }
 }
 
-// ========== 三步计算 ==========
+// ========== 三步计算（带详细日志） ==========
 function onCellChange() {
-  const tbody = document.getElementById('table-body');
-  tbody.querySelectorAll('tr').forEach(tr => {
-    // 第一步：本行总重
-    tr.querySelectorAll('[data-formula]').forEach(el => {
-      if (el.dataset.field === 'expDrugAmount') return;
-      const formula = el.dataset.formula;
-      if (formula) {
-        const result = _evaluateFormula(formula, tr);
-        el.value = result.toFixed(2);
-      }
-    });
-
-    // 第二步：载药浓度
-    const modeEl = tr.querySelector('[data-field="drugConc-mode"]');
-    if (modeEl && modeEl.value === 'formula') {
-      const concInput = tr.querySelector('[data-field="drugConc"]');
-      const formulaEl = tr.querySelector('[data-field="drugConc-formula"]');
-      if (concInput && formulaEl) {
-        const formula = formulaEl.textContent.trim();
-        if (formula && formula !== '公式待配置') {
-          const result = _evaluateFormula(formula, tr);
-          concInput.value = result.toFixed(4);
+  log('========== onCellChange 开始 ==========', 'step');
+  try {
+    const tbody = document.getElementById('table-body');
+    if (!tbody) { log('table-body 未找到', 'err'); return; }
+    
+    tbody.querySelectorAll('tr').forEach((tr, rowIdx) => {
+      log(`--- 行 ${rowIdx} ---`, 'step');
+      
+      // 第一步：本行总重
+      log('第一步：计算本行总重等', 'step');
+      tr.querySelectorAll('[data-formula]').forEach(el => {
+        if (el.dataset.field === 'expDrugAmount') {
+          log(`  跳过 ${el.dataset.field} (留到第三步)`, 'info');
+          return;
         }
+        const formula = el.dataset.formula;
+        if (formula) {
+          log(`  计算 ${el.dataset.field}: ${formula}`, 'info');
+          const result = _evaluateFormula(formula, tr);
+          el.textContent = result.toFixed(2);
+          log(`  ${el.dataset.field} = ${result.toFixed(2)} ✅`, 'ok');
+        }
+      });
+
+      // 第二步：载药浓度
+      log('第二步：计算载药浓度', 'step');
+      const modeEl = tr.querySelector('[data-field="drugConc-mode"]');
+      if (modeEl && modeEl.value === 'formula') {
+        log(`  模式: formula`, 'info');
+        const concInput = tr.querySelector('[data-field="drugConc"]');
+        const formulaEl = tr.querySelector('[data-field="drugConc-formula"]');
+        if (concInput && formulaEl) {
+          const formula = formulaEl.textContent.trim();
+          log(`  公式文本: "${formula}"`, 'info');
+          if (formula && formula !== '公式待配置') {
+            const result = _evaluateFormula(formula, tr);
+            concInput.value = result.toFixed(4);
+            log(`  载药浓度 = ${result.toFixed(4)} mg/ml ✅`, 'ok');
+          } else {
+            log(`  公式文本无效 "${formula}"`, 'err');
+          }
+        } else {
+          log(`  concInput=${!!concInput} formulaEl=${!!formulaEl}`, 'err');
+        }
+      } else {
+        log(`  模式: ${modeEl ? modeEl.value : 'modeEl未找到'}`, 'info');
       }
-    }
 
-    // 第三步：实验药量
-    const expEl = tr.querySelector('[data-field="expDrugAmount"]');
-    if (expEl && expEl.dataset.formula) {
-      const result = _evaluateFormula(expEl.dataset.formula, tr);
-      expEl.value = result.toFixed(4);
-    }
+      // 第三步：实验药量
+      log('第三步：计算实验药量', 'step');
+      const expEl = tr.querySelector('[data-field="expDrugAmount"]');
+      if (expEl) {
+        const formula = expEl.dataset.formula;
+        log(`  元素找到, data-formula="${formula}"`, 'info');
+        if (formula) {
+          const result = _evaluateFormula(formula, tr);
+          expEl.textContent = result.toFixed(4);
+          log(`  实验药量 = ${result.toFixed(4)} mg ✅`, 'ok');
+        }
+      } else {
+        log(`  [data-field="expDrugAmount"] 未找到! ❌`, 'err');
+      }
 
-    // NaN容错
-    tr.querySelectorAll('[data-formula]').forEach(el => {
-      const val = parseFloat(el.value);
-      if (isNaN(val)) el.value = '0.00';
+      // NaN容错
+      tr.querySelectorAll('[data-formula]').forEach(el => {
+        const val = parseFloat(el.textContent);
+        if (isNaN(val)) el.textContent = '0.00';
+      });
     });
-  });
-
-  runTests();
+  } catch(e) {
+    log(`onCellChange 异常: ${e.message} ${e.stack}`, 'err');
+  }
+  log('========== onCellChange 结束 ==========', 'step');
+  updateDisplay();
 }
 
-// ========== 渲染表头 ==========
+// ========== 渲染 ==========
 function renderTableHead() {
   let html = '<tr>';
   currentColumns.forEach(col => {
-    let label = col.label;
-    if (col.unit && (col.type === 'number' || col.type === 'computed')) {
-      label += `<sub>(${col.unit})</sub>`;
-    }
-    html += `<th style="width:${col.width}">${label}</th>`;
+    html += `<th>${col.label}</th>`;
   });
-  html += '</tr>';
   document.getElementById('table-head').innerHTML = html;
 }
 
-// ========== 渲染行 ==========
-function renderFormRow() {
-  let html = '<tr>';
+function renderFormRow(formData) {
+  let html = '<tr class="form-row-entry">';
   currentColumns.forEach(col => {
     switch(col.type) {
       case 'text':
-        html += `<td><input data-field="${col.id}" value="" placeholder="${col.default||''}" style="width:70px"></td>`;
+        const textVal = formData ? (formData[col.id] || '') : '';
+        html += `<td><input data-field="${col.id}" value="${textVal}" placeholder="${col.default||''}" style="width:70px"></td>`;
         break;
       case 'number':
+        let numVal = formData ? (parseFloat(formData[col.id]) || 0) : 0;
         html += `<td><input data-field="${col.id}" type="number" step="any"
-          value="0.00" oninput="onCellChange()"></td>`;
+          value="${numVal.toFixed(2)}" oninput="onCellChange()" onclick="this.select()"></td>`;
         break;
       case 'computed':
-        html += `<td><input class="computed" data-field="${col.id}" data-formula="${col.formula||''}"
-          value="0.00" readonly tabindex="-1" style="background:#f0f4f8;cursor:default"></td>`;
+        let compVal = formData ? (parseFloat(formData[col.id]) || 0) : 0;
+        html += `<td><span class="computed-span" data-field="${col.id}" data-formula="${col.formula||''}">${compVal.toFixed(2)}</span></td>`;
         break;
       case 'dynamic':
+        const mode = formData ? (formData.perRowDrugConcMode || col.defaultMode || 'manual') : (col.defaultMode || 'manual');
+        const concVal = formData ? (parseFloat(formData.perRowDrugConc) || 0) : 0;
+        const fText = formData ? (formData.perRowDrugConcFormula || col.defaultFormula || '公式待配置') : (col.defaultFormula || '公式待配置');
         html += `<td><div style="display:flex;gap:2px;align-items:center;justify-content:center">
           <select data-field="${col.id}-mode" onchange="onModeChange(this)">
-            ${(col.modes||[]).map(m =>
-              `<option value="${m.id}" ${m.id===col.defaultMode?'selected':''}>${m.label}</option>`
-            ).join('')}
+            ${(col.modes||[]).map(m => `<option value="${m.id}" ${m.id===mode?'selected':''}>${m.label}</option>`).join('')}
           </select>
-          <input data-field="${col.id}" type="number" step="any" value="0.0000"
-            oninput="onCellChange()"
-            style="${col.defaultMode==='formula'?'display:none':''};width:50px">
-          <span data-field="${col.id}-formula"
-            style="${col.defaultMode==='formula'?'':'display:none'};font-size:9px;color:#8c94a6">
-            ${col.defaultFormula || '公式待配置'}
-          </span>
+          <input data-field="${col.id}" type="number" step="any" value="${concVal.toFixed(4)}"
+            oninput="onCellChange()" style="${mode==='formula'?'display:none':''};width:55px">
+          <span data-field="${col.id}-formula" style="${mode==='formula'?'':'display:none'};font-size:9px;color:#8c94a6">${fText}</span>
         </div></td>`;
         break;
     }
   });
   html += '</tr>';
-  document.getElementById('table-body').innerHTML = html;
+  return html;
 }
 
 function onModeChange(select) {
@@ -203,12 +265,41 @@ function onModeChange(select) {
   const text = tr.querySelector('[data-field="drugConc-formula"]');
   if (input) input.style.display = mode === 'formula' ? 'none' : '';
   if (text) text.style.display = mode === 'formula' ? '' : 'none';
+  log(`模式切换: ${mode}`, 'step');
   if (mode === 'formula') onCellChange();
 }
 
-// ========== 自测脚本 ==========
-function runTests() {
-  const results = [];
+// ========== 操作函数 ==========
+function fillTestData() {
+  log('=== 填入测试数据 ===', 'step');
+  const preset = { spc:0.5,gmo:0.3,nmp:0.1,water:0.05,etoh:0.03,dopg:0.02,drugAmount:90,density:1.2,takeVolume:500 };
+  const trs = document.querySelectorAll('#table-body tr');
+  trs.forEach(tr => {
+    Object.entries(preset).forEach(([k,v]) => {
+      const el = tr.querySelector(`[data-field="${k}"]`);
+      if (el) el.value = String(v);
+    });
+  });
+  forceRecalcAll();
+}
+
+function addRow() {
+  const tbody = document.getElementById('table-body');
+  const tr = document.createElement('tr');
+  tr.className = 'form-row-entry';
+  tr.innerHTML = renderFormRow(null);
+  tbody.appendChild(tr);
+  log('添加新行', 'step');
+  onCellChange();
+}
+
+function forceRecalcAll() {
+  log('=== 强制重算全部行 ===', 'step');
+  onCellChange();
+}
+
+// ========== 显示更新 ==========
+function updateDisplay() {
   const tr = document.querySelector('#table-body tr');
   if (!tr) return;
   
@@ -221,55 +312,46 @@ function runTests() {
   const rowTotal = getVal('rowTotal');
   const drugConc = getVal('drugConc');
   const expDrug = getVal('expDrugAmount');
-  
-  // 只在有数据时测试
+  const density = getVal('density');
+  const takeVol = getVal('takeVolume');
   const drugAmt = getVal('drugAmount');
-  if (isNaN(drugAmt) || drugAmt === 0) {
-    document.getElementById('test-output').innerHTML = '<span style="color:#8c94a6">⏳ 填入数值后自动检测...</span>';
-    return;
-  }
-
-  const totalOk = !isNaN(rowTotal);
-  let concOk = false, expOk = false;
   
-  if (!isNaN(drugConc) && drugConc > 0) {
-    concOk = Math.abs(drugConc - (drugAmt / (rowTotal*1000 + drugAmt) / getVal('density'))) < 0.0001;
-  }
-  if (!isNaN(expDrug) && expDrug > 0) {
-    expOk = Math.abs(expDrug - (drugConc * getVal('takeVolume') / 1000)) < 0.0001;
-  }
-
-  document.getElementById('test-output').innerHTML = `
+  document.getElementById('current-values').innerHTML = `
     <div class="test-row">
-      <div class="test-item">本行总重: <strong>${isNaN(rowTotal) ? '—' : rowTotal.toFixed(2)} g</strong></div>
-      <div class="test-item">载药浓度: <strong>${isNaN(drugConc) ? '—' : drugConc.toFixed(4)} mg/ml</strong></div>
-      <div class="test-item">实验药量: <strong>${isNaN(expDrug) ? '—' : expDrug.toFixed(4)} mg</strong></div>
+      <div class="test-item">本行总重: <strong>${isNaN(rowTotal)?'—':rowTotal.toFixed(2)} g</strong></div>
+      <div class="test-item">药量: <strong>${isNaN(drugAmt)?'—':drugAmt.toFixed(2)} mg</strong></div>
+      <div class="test-item">密度: <strong>${isNaN(density)?'—':density.toFixed(2)} mg/ml</strong></div>
+      <div class="test-item">取用体积: <strong>${isNaN(takeVol)?'—':takeVol.toFixed(2)} μL</strong></div>
     </div>
-    <div class="test-row" style="margin-top:4px">
-      <div class="test-item">总重计算: <span class="${!isNaN(rowTotal) && rowTotal > 0 ? 'pass' : 'fail'}">${!isNaN(rowTotal) && rowTotal > 0 ? '✅' : '⏳'}</span></div>
-      <div class="test-item">载药浓度公式: <span class="${concOk ? 'pass' : 'fail'}">${concOk ? '✅' : (drugConc > 0 ? '❌' : '⏳')}</span></div>
-      <div class="test-item">实验药量公式: <span class="${expOk ? 'pass' : 'fail'}">${expOk ? '✅' : (expDrug > 0 ? '❌' : '⏳')}</span></div>
+    <div class="test-row">
+      <div class="test-item" style="font-size:14px">载药浓度: <strong style="color:#0d7377">${isNaN(drugConc)?'—':drugConc.toFixed(4)} mg/ml</strong></div>
+      <div class="test-item" style="font-size:14px">实验药量: <strong style="color:#0d7377">${isNaN(expDrug)?'—':expDrug.toFixed(4)} mg</strong></div>
     </div>
   `;
-}
 
-// ========== 预填测试数据 ==========
-function fillTestData() {
-  const preset = { spc:0.5, gmo:0.3, nmp:0.1, water:0.05, etoh:0.03, dopg:0.02, drugAmount:90, density:1.2, takeVolume:500 };
-  const tr = document.querySelector('#table-body tr');
-  Object.entries(preset).forEach(([k,v]) => {
-    const el = tr.querySelector(`[data-field="${k}"]`);
-    if (el) { el.value = String(v); }
-  });
-  onCellChange();
+  // 自测
+  if (drugAmt > 0 && density > 0 && takeVol > 0 && rowTotal > 0) {
+    const expectedConc = drugAmt / (rowTotal*1000 + drugAmt) / density;
+    const expectedExp = drugConc * takeVol / 1000;
+    const concOk = Math.abs(drugConc - expectedConc) < 0.0001;
+    const expOk = Math.abs(expDrug - expectedExp) < 0.0001 || takeVol === 0;
+    document.getElementById('auto-status').textContent = concOk && expOk ? '(✅ 自动计算正常)' : '(⚠️ 数值有偏差)';
+    document.getElementById('test-output').innerHTML = `
+      <div class="test-row">
+        <div class="test-item">载药浓度公式: <span class="${concOk ? 'pass' : 'fail'}">${concOk ? '✅ 正确' : '❌ 偏差'}</span> 计算值=${drugConc.toFixed(4)} 预期=${expectedConc.toFixed(4)}</div>
+        <div class="test-item">实验药量公式: <span class="${expOk ? 'pass' : 'fail'}">${expOk ? '✅ 正确' : '❌ 偏差'}</span> 计算值=${expDrug.toFixed(4)} 预期=${expectedExp.toFixed(4)}</div>
+      </div>
+    `;
+  } else {
+    document.getElementById('auto-status').textContent = '(⏳ 填入完整数据后自动校验...)';
+  }
 }
 
 // ========== 初始化 ==========
 renderTableHead();
-renderFormRow();
-document.querySelector('#table-body tr').innerHTML += '<td style="padding:6px"><button onclick="fillTestData()" style="padding:4px 12px;font-size:11px;cursor:pointer">填入测试数据</button></td>';
-
-document.getElementById('test-output').innerHTML = '<span style="color:#8c94a6">点击「填入测试数据」按钮验证计算...</span>';
+document.getElementById('table-body').innerHTML = renderFormRow(null);
+log('页面初始化完成，等待输入...', 'ok');
+updateDisplay();
 </script>
 </body>
 </html>

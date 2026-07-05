@@ -640,7 +640,7 @@ const ExperimentCards = (() => {
     `;
   }
 
-  /** 安全计算公式 */
+  /** 安全计算公式（带调试日志） */
   function _evaluateFormula(formula, tr) {
     if (!formula) return 0;
     try {
@@ -655,60 +655,70 @@ const ExperimentCards = (() => {
           const val = parseFloat(el.value !== undefined ? el.value : el.textContent);
           return isNaN(val) ? '0' : String(val);
         }
+        console.warn('[Formula] 变量未找到:', match, '公式:', formula);
         return '0';
       });
       // 安全执行，禁止访问全局对象
       const fn = new Function('return (' + resolved + ')');
       const result = fn();
       return isNaN(result) ? 0 : result;
-    } catch {
+    } catch (e) {
+      console.error('[Formula] 公式执行异常:', formula, e.message);
       return 0;
     }
   }
 
-  /** 输入变化时实时重新计算所有列（严格三步顺序） */
+  /** 输入变化时实时重新计算所有列（严格三步顺序 + try/catch 全局包裹） */
   function onCellChange() {
-    const tbody = document.getElementById('create-form-tbody');
-    if (!tbody) return;
-    tbody.querySelectorAll('tr.form-row-entry').forEach(tr => {
-      // 第一步：计算「本行总重」等不依赖 drugConc 的 computed 列
-      // (rowTotal: spc+gmo+nmp+water+etoh+dopg)
-      tr.querySelectorAll('[data-formula]').forEach(el => {
-        if (el.dataset.field === 'expDrugAmount') return; // 实验药量最后算
-        const formula = el.dataset.formula;
-        if (formula) {
-          const result = _evaluateFormula(formula, tr);
-          el.textContent = result.toFixed(2);
-        }
-      });
-
-      // 第二步：计算「本行载药浓度」（依赖 rowTotal，所以第一步先算）
-      const modeEl = tr.querySelector('[data-field="drugConc-mode"]');
-      if (modeEl && modeEl.value === 'formula') {
-        const concInput = tr.querySelector('[data-field="drugConc"]');
-        const formulaEl = tr.querySelector('[data-field="drugConc-formula"]');
-        if (concInput && formulaEl) {
-          const formula = formulaEl.textContent.trim();
-          if (formula && formula !== '公式待配置') {
+    try {
+      const tbody = document.getElementById('create-form-tbody');
+      if (!tbody) return;
+      tbody.querySelectorAll('tr.form-row-entry').forEach((tr, rowIdx) => {
+        // 第一步：计算「本行总重」等不依赖 drugConc 的 computed 列
+        tr.querySelectorAll('[data-formula]').forEach(el => {
+          if (el.dataset.field === 'expDrugAmount') return; // 实验药量最后算
+          const formula = el.dataset.formula;
+          if (formula) {
             const result = _evaluateFormula(formula, tr);
-            concInput.value = result.toFixed(2);
+            el.textContent = result.toFixed(2);
+          }
+        });
+
+        // 第二步：计算「本行载药浓度」（依赖 rowTotal，所以第一步先算）
+        const modeEl = tr.querySelector('[data-field="drugConc-mode"]');
+        if (modeEl && modeEl.value === 'formula') {
+          const concInput = tr.querySelector('[data-field="drugConc"]');
+          const formulaEl = tr.querySelector('[data-field="drugConc-formula"]');
+          if (concInput && formulaEl) {
+            const formula = formulaEl.textContent.trim();
+            if (formula && formula !== '公式待配置') {
+              const result = _evaluateFormula(formula, tr);
+              concInput.value = result.toFixed(2);
+            }
           }
         }
-      }
 
-      // 第三步：计算「实验药量」（依赖 drugConc，所以第二步先算）
-      const expEl = tr.querySelector('[data-field="expDrugAmount"]');
-      if (expEl && expEl.dataset.formula) {
-        const result = _evaluateFormula(expEl.dataset.formula, tr);
-        expEl.textContent = result.toFixed(2);
-      }
+        // 第三步：计算「实验药量」（依赖 drugConc，所以第二步先算）
+        const expEl = tr.querySelector('[data-field="expDrugAmount"]');
+        if (expEl) {
+          const formula = expEl.dataset.formula;
+          if (formula) {
+            const result = _evaluateFormula(formula, tr);
+            expEl.textContent = result.toFixed(2);
+          }
+        } else {
+          console.warn('[onCellChange] 未找到 expDrugAmount 元素，行', rowIdx);
+        }
 
-      // 容错：所有 computed 列如果为 NaN 显示 0.00
-      tr.querySelectorAll('[data-formula]').forEach(el => {
-        const val = parseFloat(el.textContent);
-        if (isNaN(val)) el.textContent = '0.00';
+        // 容错：所有 computed 列如果为 NaN 显示 0.00
+        tr.querySelectorAll('[data-formula]').forEach(el => {
+          const val = parseFloat(el.textContent);
+          if (isNaN(val)) el.textContent = '0.00';
+        });
       });
-    });
+    } catch (e) {
+      console.error('[onCellChange] 全局异常:', e.message, e.stack);
+    }
   }
 
   /** 载药浓度模式切换 */
