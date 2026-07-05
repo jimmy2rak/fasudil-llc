@@ -507,32 +507,68 @@ const ExperimentCards = (() => {
   /** 调试开关：true 输出日志，false 完全静默 */
   const _DEBUG = false;
 
+  // ========== 模板全局缓存（页面初始化时预加载，弹窗直接读取） ==========
+  /** 全局模板缓存：{ all: [...templates], builtin, userDefaultId }，null 表示未加载 */
+  let _globalTemplateCache = null;
+
+  /** 页面初始化时后台预加载模板缓存（不阻塞主流程） */
+  function preloadTemplateCache() {
+    if (_globalTemplateCache) return; // 已缓存，跳过
+    queueMicrotask(async () => {
+      try {
+        const [allData, defaultId] = await Promise.all([
+          ExperimentData.getAllTemplates(),
+          ExperimentData.getUserDefaultTemplateId()
+        ]);
+        _globalTemplateCache = { all: allData.all, builtin: allData.builtin, userDefaultId: defaultId };
+        _DEBUG && console.log('[Cache] 模板缓存预加载完成', { count: allData.all.length });
+      } catch (e) {
+        _DEBUG && console.warn('[Cache] 模板预加载失败，下次弹窗时实时加载', e.message);
+      }
+    });
+  }
+
+  /** 手动刷新模板缓存（设置页修改模板后调用） */
+  function refreshTemplateCache() {
+    _globalTemplateCache = null; // 清空
+    preloadTemplateCache();      // 重新预加载
+  }
+
+  /** 从缓存读取模板数据，缓存为空时实时加载 */
+  async function _getTemplatesFromCache() {
+    if (_globalTemplateCache) {
+      return _globalTemplateCache;
+    }
+    // 缓存为空 → 实时加载（兜底）
+    const [allData, defaultId] = await Promise.all([
+      ExperimentData.getAllTemplates(),
+      ExperimentData.getUserDefaultTemplateId()
+    ]);
+    _globalTemplateCache = { all: allData.all, builtin: allData.builtin, userDefaultId: defaultId };
+    return _globalTemplateCache;
+  }
+
   /** 获取系统内置标准模板 */
   function _getBuiltinDefaultTemplate() {
     return ExperimentData.getBuiltinTemplate();
   }
 
-  /** 加载首选/默认模板 */
+  /** 加载首选/默认模板（从缓存读取，无数据库请求） */
   async function _loadDefaultTemplate(editGroup) {
     try {
+      const cache = await _getTemplatesFromCache();
       // 编辑模式：优先使用实验组绑定的模板
       if (editGroup && editGroup.templateId) {
-        const all = await ExperimentData.getAllTemplates();
-        const matched = all.all.find(t => t.id === editGroup.templateId);
+        const matched = cache.all.find(t => t.id === editGroup.templateId);
         if (matched) return matched;
       }
-
-      // 读取用户首选模板ID
-      const defaultId = await ExperimentData.getUserDefaultTemplateId();
-      const all = await ExperimentData.getAllTemplates();
-
-      if (defaultId && defaultId !== 'system_default') {
-        const found = all.all.find(t => t.id === defaultId);
+      // 读取首选模板
+      if (cache.userDefaultId && cache.userDefaultId !== 'system_default') {
+        const found = cache.all.find(t => t.id === cache.userDefaultId);
         if (found) return found;
       }
-
       // 兜底：系统内置模板
-      return all.builtin;
+      return cache.builtin;
     } catch {}
     return ExperimentData.getBuiltinTemplate();
   }
@@ -787,8 +823,8 @@ const ExperimentCards = (() => {
 
   /** 切换模板时重新渲染整个表格（新建模式下切换后锁定） */
   async function onTemplateChange(tplId) {
-    const allData = await ExperimentData.getAllTemplates();
-    const tpl = allData.all.find(t => t.id === tplId) || _getBuiltinDefaultTemplate();
+    const cache = await _getTemplatesFromCache();
+    const tpl = cache.all.find(t => t.id === tplId) || _getBuiltinDefaultTemplate();
     _currentCreateTemplate = tpl;
     _templateLocked = true; // 选择后锁定，不可二次切换
 
@@ -813,10 +849,12 @@ const ExperimentCards = (() => {
     colgroup.innerHTML = tpl.columns.map(c => `<col style="width:${c.width}">`).join('');
     // 添加一行默认行
     addFormRow();
+    // 强制样式重绘
+    void tbody.closest('table')?.offsetHeight;
     onCellChange();
   }
 
-  /** 显示创建/编辑实验组弹窗（优化版：先弹窗、后渲染） */
+  /** 显示创建/编辑实验组弹窗（优化版：直接读取缓存，瞬间弹出，无加载转圈） */
   function showCreateDialog(editGroup) {
     const now = new Date().toISOString().slice(0, 10);
     const isEdit = !!editGroup;
@@ -838,109 +876,88 @@ const ExperimentCards = (() => {
       );
     }
 
-    // 第一步：立即弹出一个带加载占位的模态框（用户无等待）
-    const loadingBody = '<div style="text-align:center;padding:40px;color:var(--color-text-tertiary)"><div class="spinner"></div><p style="margin-top:16px">正在加载模板配置...</p></div>';
-    const loadingFooter = '<button class="btn btn-secondary" onclick="UI.hideModal()">取消</button>';
-    UI.showModal(title, loadingBody, loadingFooter);
+    // 直接使用缓存数据渲染弹窗（无异步等待）
+    _getTemplatesFromCache().then(async (cache) => {
+      const tpl = await _loadDefaultTemplate(editGroup);
+      _currentCreateTemplate = tpl;
+      const columns = tpl.columns;
 
-    // 第二步：异步加载模板数据（不阻塞弹窗弹出）
-    setTimeout(async () => {
-      try {
-        const tpl = await _loadDefaultTemplate(editGroup);
-        _currentCreateTemplate = tpl;
-        const [allData, columns] = await Promise.all([
-          ExperimentData.getAllTemplates(),
-          Promise.resolve(tpl.columns)
-        ]);
-
-        // 渲染行数据
-        let formRowsHtml = '';
-        if (initForms.length > 0) {
-          initForms.forEach(f => {
-            formRowsHtml += _renderFormRow(columns, f, _cachedSamplesCheckboxHtml);
-          });
-        } else {
-          formRowsHtml += _renderFormRow(columns, null, '');
-        }
-
-        const inlineStyle = `
-          <style>
-            .create-form-table{width:100%;border-collapse:collapse;table-layout:fixed}
-            .create-form-table th{font-size:12px;font-weight:500;color:var(--color-text-secondary);
-              background:var(--color-bg-tertiary);padding:10px 4px;text-align:center;border:1px solid var(--color-border)}
-            .create-form-table td{padding:4px;border:1px solid var(--color-border-light)}
-            .create-form-table .cf-input{width:100%;min-width:0;border:1px solid var(--color-border);padding:6px 8px;
-              border-radius:var(--radius-sm);font-size:13px;font-family:var(--font-sans);background:var(--color-bg-primary);
-              outline:none;box-sizing:border-box;transition:border-color .15s}
-            .create-form-table .cf-input:focus{border-color:var(--color-teal);box-shadow:0 0 0 2px rgba(13,115,119,.12)}
-            .create-form-table .cf-input[type="number"]{text-align:right;font-family:var(--font-mono)}
-            .create-form-table .cf-total{font-weight:600;color:var(--color-teal);font-family:var(--font-mono);
-              text-align:center;font-size:14px;padding:7px 2px;background:var(--color-info-bg);border-radius:var(--radius-sm);display:block}
-            .cf-mode-select{font-size:11px;padding:2px 4px;border:1px solid var(--color-border);border-radius:var(--radius-sm);
-              background:var(--color-bg-primary);margin-bottom:2px;width:100%;box-sizing:border-box}
-            .cf-conc-value{margin-top:2px}
-            .cf-conc-formula-text{display:block;padding:2px 4px;font-size:11px;color:var(--color-text-tertiary);word-break:break-all}
-          </style>
-        `;
-
-        const body = `
-          ${inlineStyle}
-          ${_renderTemplateSelector(allData, tpl.id, isEdit)}
-          <div class="form-row">
-            <div class="form-group" style="flex:2">
-              <label class="form-label">实验组名称 *</label>
-              <input class="form-input" id="create-exp-name" value="${initName}">
-              ${isEdit ? `<input type="hidden" id="edit-group-id" value="${editGroup.id}">` : ''}
-            </div>
-            <div class="form-group" style="flex:1">
-              <label class="form-label">日期</label>
-              <input class="form-input" id="create-exp-date" value="${initDate}" readonly
-                     placeholder="点击选择日期"
-                     onclick="UI.renderDatePicker('create-exp-date','${initDate}',function(v){
-                       document.getElementById('create-exp-date').value=v;
-                     })">
-            </div>
-          </div>
-          <label class="form-label" style="margin-bottom:4px">处方组成</label>
-          <table class="create-form-table">
-            <colgroup>${columns.map(c => `<col style="width:${c.width}">`).join('')}</colgroup>
-            ${_renderFormTableHead(columns)}
-            <tbody id="create-form-tbody">${formRowsHtml}</tbody>
-          </table>
-          <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
-            <button class="btn btn-sm btn-secondary" onclick="ExperimentCards.addFormRow()">+ 添加处方</button>
-            <button class="btn btn-sm btn-secondary" onclick="ExperimentCards.removeLastFormRow()">− 删除末行</button>
-            <span style="font-size:11px;color:var(--color-text-tertiary)">
-              每行独立药量、浓度配置，总重自动求和
-            </span>
-          </div>
-        `;
-
-        const footer = `
-          <button class="btn btn-secondary" onclick="UI.hideModal()">取消</button>
-          <button class="btn btn-primary" id="create-exp-confirm">${btnLabel}</button>
-        `;
-
-        // 第三步：内容就绪后替换占位（UI.showModal 内部复用已有容器）
-        // 使用已打开的模态框替换内容
-        const container = document.getElementById('modal-container');
-        if (container) {
-          container.innerHTML = body;
-          // 重建 footer
-          const footerEl = document.createElement('div');
-          footerEl.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:16px';
-          footerEl.innerHTML = footer;
-          container.appendChild(footerEl);
-        }
-
-        document.getElementById('create-exp-confirm').onclick =
-          isEdit ? () => updateExperiment(editGroup.id) : createExperiment;
-        requestAnimationFrame(() => { onCellChange(); });
-      } catch (err) {
-        console.error('[Dialog] 渲染异常:', err);
-        UI.toast('弹窗加载失败，请重试', 'error');
+      // 渲染行数据
+      let formRowsHtml = '';
+      if (initForms.length > 0) {
+        initForms.forEach(f => {
+          formRowsHtml += _renderFormRow(columns, f, _cachedSamplesCheckboxHtml);
+        });
+      } else {
+        formRowsHtml += _renderFormRow(columns, null, '');
       }
-    }, 16); // ~1帧延迟，确保弹窗DOM已挂载
+
+      const body = _buildDialogBody({ title, tpl, isEdit, initName, initDate, editGroup, cache, columns, formRowsHtml });
+      const footer = `
+        <button class="btn btn-secondary" onclick="UI.hideModal()">取消</button>
+        <button class="btn btn-primary" id="create-exp-confirm">${btnLabel}</button>
+      `;
+
+      UI.showModal(title, body, footer);
+      document.getElementById('create-exp-confirm').onclick =
+        isEdit ? () => updateExperiment(editGroup.id) : createExperiment;
+      // 强制样式重绘，确保动态<style>规则生效（修复边框丢失）
+      void document.getElementById('modal-container')?.offsetHeight;
+      requestAnimationFrame(() => { onCellChange(); });
+    });
+  }
+
+  /** 构建弹窗body HTML（纯字符串，无副作用） */
+  function _buildDialogBody({ title, tpl, isEdit, initName, initDate, editGroup, cache, columns, formRowsHtml }) {
+    return `
+      <style>
+        .create-form-table{width:100%;border-collapse:collapse;table-layout:fixed}
+        .create-form-table th{font-size:12px;font-weight:500;color:var(--color-text-secondary);
+          background:var(--color-bg-tertiary);padding:10px 4px;text-align:center;border:1px solid var(--color-border)}
+        .create-form-table td{padding:4px;border:1px solid var(--color-border-light)}
+        .create-form-table .cf-input{width:100%;min-width:0;border:1px solid var(--color-border);padding:6px 8px;
+          border-radius:var(--radius-sm);font-size:13px;font-family:var(--font-sans);background:var(--color-bg-primary);
+          outline:none;box-sizing:border-box;transition:border-color .15s}
+        .create-form-table .cf-input:focus{border-color:var(--color-teal);box-shadow:0 0 0 2px rgba(13,115,119,.12)}
+        .create-form-table .cf-input[type="number"]{text-align:right;font-family:var(--font-mono)}
+        .create-form-table .cf-total{font-weight:600;color:var(--color-teal);font-family:var(--font-mono);
+          text-align:center;font-size:14px;padding:7px 2px;background:var(--color-info-bg);border-radius:var(--radius-sm);display:block}
+        .cf-mode-select{font-size:11px;padding:2px 4px;border:1px solid var(--color-border);border-radius:var(--radius-sm);
+          background:var(--color-bg-primary);margin-bottom:2px;width:100%;box-sizing:border-box}
+        .cf-conc-value{margin-top:2px}
+        .cf-conc-formula-text{display:block;padding:2px 4px;font-size:11px;color:var(--color-text-tertiary);word-break:break-all}
+        .create-form-table th, .create-form-table td, .create-form-table input { box-sizing:border-box }
+      </style>
+      ${_renderTemplateSelector(cache, tpl.id, isEdit)}
+      <div class="form-row">
+        <div class="form-group" style="flex:2">
+          <label class="form-label">实验组名称 *</label>
+          <input class="form-input" id="create-exp-name" value="${initName}">
+          ${isEdit ? `<input type="hidden" id="edit-group-id" value="${editGroup.id}">` : ''}
+        </div>
+        <div class="form-group" style="flex:1">
+          <label class="form-label">日期</label>
+          <input class="form-input" id="create-exp-date" value="${initDate}" readonly
+                 placeholder="点击选择日期"
+                 onclick="UI.renderDatePicker('create-exp-date','${initDate}',function(v){
+                   document.getElementById('create-exp-date').value=v;
+                 })">
+        </div>
+      </div>
+      <label class="form-label" style="margin-bottom:4px">处方组成</label>
+      <table class="create-form-table">
+        <colgroup>${columns.map(c => `<col style="width:${c.width}">`).join('')}</colgroup>
+        ${_renderFormTableHead(columns)}
+        <tbody id="create-form-tbody">${formRowsHtml}</tbody>
+      </table>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+        <button class="btn btn-sm btn-secondary" onclick="ExperimentCards.addFormRow()">+ 添加处方</button>
+        <button class="btn btn-sm btn-secondary" onclick="ExperimentCards.removeLastFormRow()">− 删除末行</button>
+        <span style="font-size:11px;color:var(--color-text-tertiary)">
+          每行独立药量、浓度配置，总重自动求和
+        </span>
+      </div>
+    `;
   }
 
   /** 编辑模式：样品多选复选框变化时的处理 */
@@ -956,6 +973,8 @@ const ExperimentCards = (() => {
     tr.className = 'form-row-entry';
     tr.innerHTML = _renderFormRow(_currentCreateTemplate.columns, null, _cachedSamplesCheckboxHtml);
     tbody.appendChild(tr);
+    // 强制新行样式重绘
+    void tr.offsetHeight;
     onCellChange();
   }
 
@@ -1309,6 +1328,8 @@ const ExperimentCards = (() => {
     onCellChange,
     onConcModeChange,
     onTemplateChange,
+    preloadTemplateCache,
+    refreshTemplateCache,
     _showFormulaTip,
     _hideFormulaTip,
     _onSampleCheckboxChange

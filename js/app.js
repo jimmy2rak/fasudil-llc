@@ -282,6 +282,8 @@ const App = (() => {
       try { await ML.loadRules(); } catch (e) { console.warn('加载规则失败:', e.message); }
       await navigate('dashboard');
       initialized = true;
+      // 后台预加载模板缓存（不阻塞页面渲染）
+      ExperimentCards.preloadTemplateCache();
       console.log('[Fasudil-LLC] 应用初始化成功');
     } catch (err) {
       console.error('[Fasudil-LLC] 初始化失败:', err.message);
@@ -2523,6 +2525,7 @@ const App = (() => {
 
     UI.hideModal();
     UI.toast(`模板「${name}」已保存`, 'success');
+    if (window.ExperimentCards) ExperimentCards.refreshTemplateCache();
     showSettings();
   }
 
@@ -2540,6 +2543,7 @@ const App = (() => {
     templates.push(copy);
     await ExperimentData.saveUserTemplates(templates);
     UI.toast('模板已复制', 'success');
+    if (window.ExperimentCards) ExperimentCards.refreshTemplateCache();
     showSettings();
   }
 
@@ -2547,6 +2551,7 @@ const App = (() => {
   async function _setDefaultTemplate(tplId) {
     await ExperimentData.saveUserDefaultTemplateId(tplId);
     UI.toast('首选模板已更新', 'success');
+    if (window.ExperimentCards) ExperimentCards.refreshTemplateCache();
     showSettings();
   }
 
@@ -2562,6 +2567,7 @@ const App = (() => {
     UI.confirm('删除模板', `确定要删除模板「${tpl.name}」吗？`, async () => {
       await ExperimentData.deleteUserTemplate(tplId);
       UI.toast('模板已删除', 'success');
+      if (window.ExperimentCards) ExperimentCards.refreshTemplateCache();
       showSettings();
     });
   }
