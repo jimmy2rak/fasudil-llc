@@ -85,7 +85,7 @@ const BUILTIN_TEMPLATE = {
     { id:'drugAmount', label:'本行加入药量(mg)', type:'number', order:8, default:0 },
     { id:'density', label:'密度(g/ml)', type:'number', order:9, default:0 },
     { id:'drugConc', label:'本行载药浓度(mg/ml)', type:'computed', order:10,
-      formula:'drugAmount/(rowTotal*1000+drugAmount)/density' },
+      formula:'drugAmount/(rowTotal*1000+drugAmount)/density*1000' },
     { id:'takeVolume', label:'取用体积(μL)', type:'number', order:11, default:0 },
     { id:'expDrugAmount', label:'实验药量(mg)', type:'computed', order:12, formula:'drugConc*takeVolume/1000' },
     { id:'samples', label:'对应样品', type:'text', order:13, default:'' },

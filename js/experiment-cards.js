@@ -513,8 +513,8 @@ const ExperimentCards = (() => {
         { id:'drugAmount', label:'本行加入药量', type:'number', unit:'mg', width:'85px', order:8, default:0 },
         { id:'density', label:'密度', type:'number', unit:'g/ml', width:'70px', order:9, default:0 },
         { id:'drugConc',   label:'本行载药浓度', type:'computed', width:'95px', order:10,
-          formula:'drugAmount/(rowTotal*1000+drugAmount)/density',
-          formulaDescription:'本行加入药量 ÷ (本行总重×1000 + 本行加入药量) ÷ 密度' },
+          formula:'drugAmount/(rowTotal*1000+drugAmount)/density*1000',
+          formulaDescription:'本行加入药量 ÷ (本行总重×1000 + 本行加入药量) ÷ 密度(g/ml) × 1000' },
         { id:'takeVolume', label:'取用体积', type:'number', unit:'μL', width:'70px', order:11, default:0 },
         { id:'expDrugAmount', label:'实验药量', type:'computed', width:'75px', order:12,
           formula:'drugConc*takeVolume/1000', formulaDescription:'载药浓度×取用体积÷1000' },
@@ -546,7 +546,7 @@ const ExperimentCards = (() => {
       }
       // 载药浓度列加感叹号悬浮提示
       if (col.id === 'drugConc') {
-        const tooltipContent = `计算公式：本行载药浓度(mg/ml) = 本行加入药量 ÷ (本行总重×1000 + 本行加入药量) ÷ 密度\n换算说明：本行总重单位g，自动转换为mg参与运算；1g=1000mg`;
+        const tooltipContent = `计算公式：本行载药浓度(mg/ml) = 本行加入药量 ÷ (本行总重×1000 + 本行加入药量) ÷ 密度(g/ml) × 1000\n换算说明：本行总重单位g，自动转换为mg参与运算（×1000）；密度单位g/ml，自动转换为mg/ml参与运算（×1000）`;
         label += `<span class="formula-hint-icon" 
           onmouseenter="ExperimentCards._showFormulaTip(event, '${tooltipContent.replace(/'/g, "\\'").replace(/\n/g, '\\n')}')"
           onmouseleave="ExperimentCards._hideFormulaTip()"
@@ -710,7 +710,7 @@ const ExperimentCards = (() => {
       if (!tbody) return;
       tbody.querySelectorAll('tr.form-row-entry').forEach((tr, rowIdx) => {
         // 第一步：计算所有 computed 列（本行总重、载药浓度等）
-        // 载药浓度公式: drugAmount/(rowTotal*1000+drugAmount)/density
+        // 载药浓度公式: drugAmount/(rowTotal*1000+drugAmount)/density*1000
         // 注意 expDrugAmount 依赖 drugConc，跳过它留到最后算
         tr.querySelectorAll('[data-formula]').forEach(el => {
           if (el.dataset.field === 'expDrugAmount') return;
