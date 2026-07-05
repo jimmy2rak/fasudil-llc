@@ -385,7 +385,7 @@ const ExperimentData = (() => {
       { id:'takeVolume', label:'取用体积', type:'number', unit:'μL', width:'70px', order:11, default:0 },
       { id:'expDrugAmount', label:'实验药量', type:'computed', width:'75px', order:12,
         formula:'drugConc*takeVolume/1000', formulaDescription:'载药浓度×取用体积÷1000' },
-      { id:'samples', label:'对应样品', type:'samples', width:'115px', order:13, default:'' },
+      { id:'samples', label:'对应样品', type:'text', width:'115px', order:13, default:'' },
     ]
   };
 

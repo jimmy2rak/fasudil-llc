@@ -586,7 +586,15 @@ const ExperimentCards = (() => {
       switch(col.type) {
         case 'text':
           const txtVal = formData ? (formData.name || formData[col.id] || '') : '';
-          // 【修复】编辑模式：对应样品列改为多选复选（只展示已有样品，不新增）
+          // ===== 【检查点2】对应样品列渲染分支判断 =====
+          if (col.id === 'samples') {
+            console.log('[样品列调试] _renderFormRow samples分支', {
+              _existingEditSamples_len: _existingEditSamples.length,
+              isCheckboxMode: _existingEditSamples.length > 0,
+              formDataSamples: formData ? formData.samples : null,
+              formDataType: formData ? typeof formData.samples : 'N/A'
+            });
+          }
           if (col.id === 'samples' && _existingEditSamples.length > 0) {
             // 兼容旧数据：formData.samples 可能是空格分隔字符串或数组
             let rawSamples = formData && formData.samples ? formData.samples : [];
@@ -816,8 +824,15 @@ const ExperimentCards = (() => {
     const initDate = isEdit ? (editGroup.date || now) : now;
     const initForms = isEdit ? (editGroup.formulations || []) : [];
 
-    // 【修复】编辑模式：记录现有样品列表，供多选下拉复选使用
+    // ===== 【检查点1】_existingEditSamples 赋值逻辑 =====
     _existingEditSamples = isEdit ? (editGroup.samples || []) : [];
+    console.log('[样品列调试] showCreateDialog', {
+      mode: isEdit ? '编辑' : '创建',
+      isEdit,
+      _existingEditSamples,
+      _existingEditSamples_len: _existingEditSamples.length,
+      editGroupSamples: editGroup ? editGroup.samples : null,
+    });
 
     // 异步加载模板后渲染弹窗
     _templateLocked = isEdit; // 编辑模式直接锁定
@@ -969,7 +984,7 @@ const ExperimentCards = (() => {
         }
       });
 
-      // 【修复】收集样品ID：编辑模式从复选框读取，创建模式从文本读取
+      // ===== 【检查点3】收集样品ID：创建/编辑双分支 =====
       let sids = [];
       const checkboxGroup = tr.querySelector('.sample-checkbox-group');
       if (checkboxGroup) {
@@ -977,10 +992,12 @@ const ExperimentCards = (() => {
         checkboxGroup.querySelectorAll('input[type="checkbox"]:checked').forEach(cb => {
           sids.push(cb.value);
         });
+        console.log('[样品列调试] _collectFormRows 编辑模式(复选框)', { sids });
       } else {
-        // 创建模式：从文本输入读取
+        // 创建模式：从文本输入读取（空格分隔）
         const samplesStr = getVal('samples');
         sids = samplesStr.split(/[,，\s、]+/).filter(s => s.length > 0);
+        console.log('[样品列调试] _collectFormRows 创建模式(文本输入)', { rawText: samplesStr, sids });
       }
       if (sids.length === 0) {
         UI.toast(`处方"${fn}"的对应样品不能为空`,'warning');
