@@ -26,6 +26,8 @@ const App = (() => {
   // ============================================================
   const SETTINGS_CACHE_KEY = 'FasudilLLC_SettingsCache';
   let _settingsCache = null; // { settings, templates, defaultId }
+  let _pendingKnowledgeReport = null; // 待保存到知识库的分析结果（来自上传/AI分析 modal）
+  let _knowledgeFilter = 'all';       // 知识库来源筛选
 
   function _loadSettingsCacheFromStorage() {
     if (_settingsCache) return _settingsCache;
@@ -40,6 +42,22 @@ const App = (() => {
     try {
       if (_settingsCache) localStorage.setItem(SETTINGS_CACHE_KEY, JSON.stringify(_settingsCache));
     } catch (e) { /* ignore */ }
+  }
+
+  /** P0-2 修复：写操作（改首选模板/增删模板）后，从本地 ExperimentData 重新同步
+      _settingsCache.templates / defaultId，避免重渲染设置页时读到陈旧缓存值。
+      本地 ExperimentData 是模板真相源，比走云端 refreshSettingsCache 更快更可靠。 */
+  async function _syncSettingsCacheFromLocal() {
+    try {
+      const tplData = await ExperimentData.getAllTemplates();
+      const defaultId = await ExperimentData.getUserDefaultTemplateId();
+      if (!_settingsCache) _settingsCache = {};
+      _settingsCache.templates = tplData;
+      _settingsCache.defaultId = defaultId || 'system_default';
+      _saveSettingsCacheToStorage();
+    } catch (e) {
+      console.warn('[Fasudil-LLC] 同步设置缓存失败:', e.message);
+    }
   }
 
   /** 同步读取设置缓存（无网络，瞬时返回，用于首屏 / 设置即时渲染） */
@@ -343,26 +361,19 @@ const App = (() => {
    * 强制登出：清除所有凭证 → 跳转登录页
    */
   function forceLogout() {
-    // 1. 清空 LocalStorage
-    try {
-      localStorage.clear();
-    } catch (e) {}
+    // 仅清除认证凭证，保留用户本地实验/模板数据（避免误踢导致数据丢失）
+    try { localStorage.removeItem('auth_user'); } catch (e) {}
+    try { sessionStorage.removeItem('auth_user'); } catch (e) {}
 
-    // 2. 清空 SessionStorage
-    try {
-      sessionStorage.clear();
-    } catch (e) {}
-
-    // 3. 清空所有 Cookie
+    // 清除 auth 相关 Cookie（不清无关 Cookie）
     document.cookie.split(';').forEach(c => {
-      document.cookie = c.replace(/^ +/, '')
-        .replace(/=.*/, `=; expires=${new Date(0).toUTCString()}; path=/`);
+      const name = c.replace(/^ +/, '').replace(/=.*/, '');
+      if (/auth|token|session|login|jwt/i.test(name)) {
+        document.cookie = name + '=; expires=' + new Date(0).toUTCString() + '; path=/';
+      }
     });
 
-    // 4. 标记内存状态
     initialized = false;
-
-    // 5. 硬跳转到登录页
     window.location.replace('/');
   }
 
@@ -425,11 +436,21 @@ const App = (() => {
         'Pragma': 'no-cache'
       }
     }).then(async (authRes) => {
-      if (!authRes || !authRes.ok) {
-        // token 过期或无效 → 清除凭证后跳登录页（此时首屏已短暂显示，可接受）
-        console.warn('[Fasudil-LLC] 鉴权失败，清除凭证');
+      if (!authRes) {
+        // 网络异常（fetch 失败/超时）→ 保留本地乐观渲染，离线可用
+        console.warn('[Fasudil-LLC] 网络异常，保留本地乐观渲染（离线模式）');
+        return;
+      }
+      if (authRes.status === 401) {
+        // 明确未授权 → 清除凭证后跳登录页
+        console.warn('[Fasudil-LLC] 鉴权失败(401)，清除凭证');
         try { localStorage.removeItem('auth_user'); } catch {}
         forceLogout();
+        return;
+      }
+      if (!authRes.ok) {
+        // 服务端异常（5xx 等）→ 保留本地数据，不踢出已登录用户
+        console.warn('[Fasudil-LLC] 服务异常(' + authRes.status + ')，保留本地数据不踢出');
         return;
       }
       // 鉴权通过：后台静默预热（均不阻塞 UI）
@@ -954,7 +975,16 @@ const App = (() => {
       finalRate = absVals.length > 0 ? (cum[cum.length-1] / DRUG_AMOUNT_PLACEHOLDER) * 100 : 0;
     }
     const html = `<div style="background:var(--color-bg-secondary);border-radius:8px;padding:16px;margin-bottom:12px"><div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px"><div><strong>文件:</strong> ${fileName}</div><div><strong>数据行数:</strong> ${absVals.length}</div><div><strong>估计释放率:</strong> ${finalRate.toFixed(2)}%</div></div></div><div style="font-size:13px;color:var(--color-text-secondary)"><p>• 文件包含 ${absVals.length} 数据点，估计释放率 ${finalRate.toFixed(2)}%。</p><p>• 通过「保存到实验」导入后进行完整 Skill 分析。</p></div>`;
-    UI.showModal(`Skill 分析 — ${fileName}`, `<div style="max-height:500px;overflow-y:auto">${html}</div>`, `<button class="btn btn-primary btn-sm" onclick="UI.hideModal();App.showSaveToExperiment('${fileName}')">📥 保存到实验</button><button class="btn btn-secondary btn-sm" onclick="UI.hideModal()">关闭</button>`);
+    _pendingKnowledgeReport = {
+      title: 'Skill 分析 — ' + fileName,
+      content: html,
+      sourceType: 'upload',
+      sourceName: fileName
+    };
+    UI.showModal(`Skill 分析 — ${fileName}`, `<div style="max-height:500px;overflow-y:auto">${html}</div>`,
+      `<button class="btn btn-primary btn-sm" onclick="UI.hideModal();App.showSaveToExperiment('${fileName}')">📥 保存到实验</button>` +
+      `<button class="btn btn-secondary btn-sm" onclick="App.savePendingKnowledge()">📚 保存到知识库</button>` +
+      `<button class="btn btn-secondary btn-sm" onclick="UI.hideModal()">关闭</button>`);
   }
 
   function showSaveToExperiment(fileName) {
@@ -1280,33 +1310,177 @@ const App = (() => {
   }
 
   // --- 知识库页 ---
+  // ============================================================
+  // 知识库 V1：分析报告库（localStorage 优先，云端降级）
+  // 报告来源：上传文件一键分析 / 实验记录一键分析 / 手动 AI 分析
+  // ============================================================
   async function renderKnowledgePage(container) {
-    let literature = [];
-    try {
-      literature = await FSManager.listLiterature();
-    } catch (e) {
-      debugLog('加载文献失败: ' + e.message);
+    let reports = KnowledgeData.getAllReports();
+    if (_knowledgeFilter !== 'all') {
+      reports = reports.filter(r => r.sourceType === _knowledgeFilter);
     }
 
     let html = `<div class="page-header">
-      <div><div class="page-title">知识库</div><div class="page-subtitle">文献管理、经验积累、对比分析</div></div>
-      <button class="btn btn-primary" onclick="App.showCreateLiteratureDialog()">添加文献</button>
+      <div><div class="page-title">知识库</div><div class="page-subtitle">沉淀上传文件与实验记录的一键分析报告</div></div>
+      <button class="btn btn-primary" onclick="App.showKnowledgeAIDialog()">✨ AI 一键分析</button>
     </div>`;
 
-    html += UI.renderTabs([
-      { label: '文献', content: `<div class="card">
-        ${literature.length === 0 ?
-          UI.renderEmptyState('暂无文献', '添加相关论文的关键数据与方法', '添加文献', "App.showCreateLiteratureDialog()") :
-          UI.renderTable(['ID', '标题', '作者', '年份', '标签'], literature.map(lit => ({
-            ID: lit.id, 标题: lit.title || '—', 作者: lit.authors || '—', 年份: lit.year || '—', 标签: lit.tags || '—'
-          })))
-        }
-      </div>` },
-      { label: '经验', content: '<div class="card"><div class="card-title">经验条目</div><p style="color:var(--color-text-tertiary)">记录条件→操作→结果→结论，可提炼为自学习规则</p></div>' },
-      { label: '对比分析', content: '<div class="card"><div class="card-title">实验 vs 文献</div><p style="color:var(--color-text-tertiary)">选择实验和文献数据，同图对比释放曲线，计算 f2</p></div>' }
-    ], 0);
+    // 来源筛选
+    const tabs = [
+      { k: 'all', label: '全部' },
+      { k: 'experiment', label: '实验记录' },
+      { k: 'upload', label: '上传文件' },
+      { k: 'manual', label: '手动' }
+    ];
+    html += '<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">';
+    for (const t of tabs) {
+      const active = _knowledgeFilter === t.k ? 'btn-primary' : 'btn-secondary';
+      html += `<button class="btn btn-sm ${active}" onclick="App.filterKnowledge('${t.k}')">${t.label}</button>`;
+    }
+    html += '</div>';
 
+    if (reports.length === 0) {
+      const tip = _knowledgeFilter === 'all'
+        ? '在「上传文件」或「实验记录」一键分析后，点击「保存到知识库」即可沉淀报告'
+        : '该来源暂无报告';
+      html += UI.renderEmptyState('知识库暂无报告', tip, 'AI 一键分析', 'App.showKnowledgeAIDialog()');
+      container.innerHTML = html;
+      return;
+    }
+
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px">';
+    for (const r of reports) {
+      const srcLabel = r.sourceType === 'experiment' ? '实验记录' : r.sourceType === 'upload' ? '上传文件' : '手动';
+      const srcCls = r.sourceType === 'experiment' ? 'tag-success' : r.sourceType === 'upload' ? 'tag-info' : 'tag-default';
+      const date = r.createdAt ? new Date(r.createdAt).toLocaleString('zh-CN') : '';
+      const summary = r.summary || (r.content ? String(r.content).replace(/<[^>]+>/g, '').substring(0, 90) : '');
+      html += `<div class="card" style="cursor:pointer" onclick="App.showKnowledgeReport('${r.id}')">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+          <div style="font-weight:600;font-size:15px">${r.title || '未命名报告'}</div>
+          <span class="tag ${srcCls}">${srcLabel}</span>
+        </div>
+        <div style="font-size:12px;color:var(--color-text-tertiary);margin:6px 0">${date}${r.sourceName ? ' · ' + r.sourceName : ''}</div>
+        <div style="font-size:13px;color:var(--color-text-secondary);max-height:54px;overflow:hidden">${summary}</div>
+        <div style="margin-top:10px;display:flex;gap:8px">
+          <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();App.showKnowledgeReport('${r.id}')">查看</button>
+          <button class="btn btn-sm btn-danger" onclick="event.stopPropagation();App.deleteKnowledgeReport('${r.id}')">删除</button>
+        </div>
+      </div>`;
+    }
+    html += '</div>';
     container.innerHTML = html;
+  }
+
+  /** 知识库来源筛选 */
+  function filterKnowledge(k) {
+    _knowledgeFilter = k;
+    _refreshPage('knowledge');
+  }
+
+  /** 查看报告详情 */
+  function showKnowledgeReport(id) {
+    const r = KnowledgeData.getReport(id);
+    if (!r) { UI.toast('报告不存在', 'warning'); return; }
+    const srcLabel = r.sourceType === 'experiment' ? '实验记录' : r.sourceType === 'upload' ? '上传文件' : '手动';
+    const date = r.createdAt ? new Date(r.createdAt).toLocaleString('zh-CN') : '';
+    const tags = (r.tags || []).map(t => `<span class="tag tag-default">${t}</span>`).join(' ');
+    const body = `
+      <div style="margin-bottom:12px;font-size:12px;color:var(--color-text-tertiary)">
+        <span class="tag tag-info">${srcLabel}</span> ${date}${r.sourceName ? ' · ' + r.sourceName : ''} ${tags}
+      </div>
+      <div style="padding:16px;background:var(--color-bg-secondary);border-radius:8px;max-height:420px;overflow-y:auto;font-size:14px;line-height:1.6;white-space:pre-wrap">${r.content || ''}</div>`;
+    UI.showModal(r.title || '报告详情', body, `<button class="btn btn-secondary" onclick="UI.hideModal()">关闭</button>`);
+  }
+
+  /** 删除报告 */
+  function deleteKnowledgeReport(id) {
+    UI.confirm('删除报告', '确定要删除该分析报告吗？', () => {
+      KnowledgeData.deleteReport(id);
+      UI.toast('已删除', 'success');
+      if (currentPage === 'knowledge') _refreshPage('knowledge');
+    });
+  }
+
+  /** 将 pending 的分析结果保存到知识库（来自上传/AI分析 modal） */
+  function savePendingKnowledge() {
+    if (!_pendingKnowledgeReport) { UI.toast('暂无可保存的分析结果', 'warning'); return; }
+    const r = _pendingKnowledgeReport;
+    r.summary = r.summary || String(r.content || '').replace(/<[^>]+>/g, '').substring(0, 120);
+    KnowledgeData.saveReport(r);
+    UI.toast('已保存到知识库', 'success');
+    _pendingKnowledgeReport = null;
+    if (currentPage === 'knowledge') _refreshPage('knowledge');
+  }
+
+  /** 知识库内 AI 一键分析入口 */
+  function showKnowledgeAIDialog() {
+    const experiments = ExperimentData.getAllExperiments();
+    const expOptions = experiments.length
+      ? experiments.map(e => `<option value="${e.id}">${e.name}</option>`).join('')
+      : '<option value="">（暂无实验记录）</option>';
+    const body = `
+      <div class="form-group">
+        <label class="form-label">报告标题</label>
+        <input class="form-input" id="kb-ai-title" placeholder="例如：XXX 处方释放度分析">
+      </div>
+      <div class="form-group">
+        <label class="form-label">分析来源</label>
+        <select class="form-input" id="kb-ai-source" onchange="App._kbAiSourceChange()">
+          <option value="manual">粘贴文本</option>
+          <option value="experiment">实验记录</option>
+        </select>
+      </div>
+      <div class="form-group" id="kb-ai-exp-wrap" style="display:none">
+        <label class="form-label">选择实验</label>
+        <select class="form-input" id="kb-ai-exp">${expOptions}</select>
+      </div>
+      <div class="form-group" id="kb-ai-text-wrap">
+        <label class="form-label">待分析文本</label>
+        <textarea class="form-input" id="kb-ai-text" rows="5" placeholder="粘贴实验数据、处方组成或表征结果..."></textarea>
+      </div>`;
+    const footer = `<button class="btn btn-secondary" onclick="UI.hideModal()">取消</button>
+      <button class="btn btn-primary" onclick="App.runKnowledgeAI()">分析并保存</button>`;
+    UI.showModal('AI 一键分析', body, footer);
+  }
+
+  function _kbAiSourceChange() {
+    const v = document.getElementById('kb-ai-source').value;
+    const expWrap = document.getElementById('kb-ai-exp-wrap');
+    const textWrap = document.getElementById('kb-ai-text-wrap');
+    if (expWrap) expWrap.style.display = v === 'experiment' ? 'block' : 'none';
+    if (textWrap) textWrap.style.display = v === 'experiment' ? 'none' : 'block';
+  }
+
+  /** 执行知识库 AI 分析并保存 */
+  async function runKnowledgeAI() {
+    const title = (document.getElementById('kb-ai-title').value || '').trim() || ('AI 分析 ' + new Date().toLocaleString('zh-CN'));
+    const source = document.getElementById('kb-ai-source').value;
+    let text = '', sourceName = '', sourceId = '', sourceType = 'manual';
+    if (source === 'experiment') {
+      sourceId = document.getElementById('kb-ai-exp').value;
+      const exp = ExperimentData.getAllExperiments().find(e => e.id === sourceId);
+      if (!exp) { UI.toast('请选择实验', 'warning'); return; }
+      sourceName = exp.name; sourceType = 'experiment';
+      text = JSON.stringify(exp.data || exp, null, 2);
+    } else {
+      text = (document.getElementById('kb-ai-text').value || '').trim();
+      if (!text) { UI.toast('请输入待分析文本', 'warning'); return; }
+    }
+    const cache = getCachedSettings();
+    const settings = cache.settings || {};
+    const api = (settings.apiConfigs || []).find(a => a.id === settings.activeApi) || (settings.apiConfigs || [])[0];
+    if (!api) { UI.toast('请先在设置中配置 AI API', 'warning'); return; }
+    UI.hideModal();
+    UI.toast('AI 分析中...', 'info');
+    try {
+      const result = await callAIAPI(api, { plainText: text });
+      const content = typeof result === 'string' ? result : JSON.stringify(result);
+      KnowledgeData.saveReport({ title, content, sourceType, sourceId, sourceName, tags: ['AI分析'] });
+      UI.toast('已保存到知识库', 'success');
+      if (currentPage === 'knowledge') _refreshPage('knowledge');
+    } catch (e) {
+      UI.toast('AI 分析失败: ' + e.message, 'danger');
+    }
   }
 
   // --- 处方管理页 ---
@@ -2772,6 +2946,7 @@ const App = (() => {
     await ExperimentData.saveUserTemplates(templates);
     UI.toast('模板已复制', 'success');
     if (window.ExperimentCards) ExperimentCards.refreshTemplateCache();
+    await _syncSettingsCacheFromLocal();
     _refreshPage('settings');
   }
 
@@ -2780,6 +2955,7 @@ const App = (() => {
     await ExperimentData.saveUserDefaultTemplateId(tplId);
     UI.toast('首选模板已更新', 'success');
     if (window.ExperimentCards) ExperimentCards.refreshTemplateCache();
+    await _syncSettingsCacheFromLocal();
     _refreshPage('settings');
   }
 
@@ -2796,6 +2972,7 @@ const App = (() => {
       await ExperimentData.deleteUserTemplate(tplId);
       UI.toast('模板已删除', 'success');
       if (window.ExperimentCards) ExperimentCards.refreshTemplateCache();
+      await _syncSettingsCacheFromLocal();
       _refreshPage('settings');
     });
   }
@@ -3197,6 +3374,12 @@ const App = (() => {
 
   // --- 显示分析结果 ---
   function showAnalysisResult(fileName, analysisResult) {
+    _pendingKnowledgeReport = {
+      title: 'AI 分析 — ' + fileName,
+      content: analysisResult,
+      sourceType: 'upload',
+      sourceName: fileName
+    };
     const body = `
       <div style="margin-bottom:16px">
         <strong>文件:</strong> ${fileName}
@@ -3208,7 +3391,8 @@ const App = (() => {
 
     const footer = `
       <button class="btn btn-secondary" onclick="UI.hideModal()">关闭</button>
-      <button class="btn btn-primary" onclick="UI.toast('导入功能将在后续版本完善', 'info')">导入分析结果</button>
+      <button class="btn btn-primary" onclick="App.savePendingKnowledge()">📚 保存到知识库</button>
+      <button class="btn btn-secondary" onclick="UI.toast('导入功能将在后续版本完善', 'info')">导入分析结果</button>
     `;
 
     UI.showModal('AI 分析结果', body, footer);
@@ -3379,6 +3563,14 @@ const App = (() => {
     runResidual,
     showCreateLiteratureDialog,
     createLiterature,
+    // 知识库 V1：分析报告库
+    showKnowledgeAIDialog,
+    _kbAiSourceChange,
+    runKnowledgeAI,
+    filterKnowledge,
+    showKnowledgeReport,
+    deleteKnowledgeReport,
+    savePendingKnowledge,
     showSettings,
     showAddApiDialog,
     applyApiPreset,
