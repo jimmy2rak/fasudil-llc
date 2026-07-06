@@ -342,7 +342,8 @@ const App = (() => {
       case 'dashboard': renderDashboard(content); break;
       case 'upload': renderUploadPage(content); break;
       case 'experiments': renderExperimentsPage(content); break;
-      case 'calculations': renderCalculationsPage(content); break;
+      case 'calculations': // 旧路由兼容重定向
+      case 'tools': renderToolsPage(content); break;
       case 'knowledge': renderKnowledgePage(content); break;
       case 'prescription': renderPrescriptionPage(content); break;
       case 'sample': renderSamplePage(content); break;
@@ -904,7 +905,8 @@ const App = (() => {
   }
 
   // --- 计算表页 ---
-  function renderCalculationsPage(container) {
+  /** 小工具页面（原计算表移入此处，作为卡片内容） */
+  function renderToolsPage(container) {
     const calculators = [
       { id: 'ee', name: '包封率 EE%', icon: '◆' },
       { id: 'dl', name: '载药量 DL%', icon: '●' },
@@ -914,14 +916,16 @@ const App = (() => {
       { id: 'residual', name: '释放残留率', icon: '▼' }
     ];
 
+    // 拦截导航，点击计算器时高亮「小工具」
     let html = `<div class="page-header">
-      <div><div class="page-title">计算表</div><div class="page-subtitle">选择计算类型，输入数据，查看结果</div></div>
+      <div><div class="page-title">小工具</div><div class="page-subtitle">辅助实验数据分析工具集合</div></div>
     </div>`;
 
-    html += '<div class="card"><div class="card-title">选择计算器</div>';
+    html += '<div class="card"><div class="card-title">计算工具合集</div>';
+    html += '<p style="font-size:13px;color:var(--color-text-secondary);margin-bottom:16px">选择计算类型，输入数据，自动输出计算结果</p>';
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px">';
     for (const calc of calculators) {
-      html += `<button class="btn btn-secondary" style="padding:16px;text-align:center" onclick="App.showCalculator('${calc.id}')">
+      html += `<button class="btn btn-secondary" style="padding:16px;text-align:center" onclick="App.showToolCalculator('${calc.id}')">
         <div style="font-size:20px;margin-bottom:4px">${calc.icon}</div>
         <div>${calc.name}</div>
       </button>`;
@@ -1627,6 +1631,15 @@ const App = (() => {
   }
 
   // --- 计算器 ---
+  /** 从小工具页面打开计算器（同时高亮侧边导航） */
+  function showToolCalculator(calcType) {
+    // 高亮「小工具」导航
+    document.querySelectorAll('.nav-item').forEach(item => {
+      item.classList.toggle('active', item.dataset.page === 'tools');
+    });
+    showCalculator(calcType);
+  }
+
   function showCalculator(calcType) {
     const workspace = document.getElementById('calc-workspace');
     if (!workspace) return;
@@ -3144,6 +3157,7 @@ const App = (() => {
     confirmImport,
     exportReport,
     showCalculator,
+    showToolCalculator,
     runEE,
     runDL,
     runCumulative,
