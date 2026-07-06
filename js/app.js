@@ -206,7 +206,8 @@ const App = (() => {
       userTemplates: []
     };
     const userTemplates = tplData.userTemplates || [];
-    const builtinTpl = tplData.builtin;
+    const builtinTpl = tplData.builtin || { name: '系统内置标准模板', columns: [], description: '' };
+    const builtinColumns = builtinTpl.columns || [];
     const userDefaultId = cache.defaultId || 'system_default';
 
     html += `<div class="card" style="margin-bottom:20px">
@@ -222,7 +223,7 @@ const App = (() => {
               <strong>${builtinTpl.name}</strong>
               <span class="tag tag-default" style="margin-left:6px;font-size:10px;background:#8c94a6;color:#fff">内置·不可编辑</span>
               ${userDefaultId === 'system_default' ? '<span class="tag tag-primary" style="margin-left:6px">首选</span>' : ''}
-              <span style="font-size:12px;color:var(--color-text-tertiary);margin-left:8px">${builtinTpl.columns.length} 列 · ${builtinTpl.description||''}</span>
+              <span style="font-size:12px;color:var(--color-text-tertiary);margin-left:8px">${builtinColumns.length} 列 · ${builtinTpl.description||''}</span>
             </div>
             <div style="display:flex;gap:4px">
               <button class="btn btn-sm btn-secondary" onclick="App._previewBuiltinTemplate()">预览</button>
@@ -230,7 +231,7 @@ const App = (() => {
             </div>
           </div>
           <div style="font-size:12px;color:var(--color-text-tertiary);overflow-x:auto;white-space:nowrap">
-            ${builtinTpl.columns.map(c => `<span style="display:inline-block;padding:2px 6px;margin-right:4px;border:1px solid var(--color-border);border-radius:4px;background:var(--color-bg-primary)">${c.label}${c.unit ? '('+c.unit+')' : ''}${c.type === 'computed' ? ' ⚡' : ''}</span>`).join('')}
+            ${builtinColumns.map(c => `<span style="display:inline-block;padding:2px 6px;margin-right:4px;border:1px solid var(--color-border);border-radius:4px;background:var(--color-bg-primary)">${c.label}${c.unit ? '('+c.unit+')' : ''}${c.type === 'computed' ? ' ⚡' : ''}</span>`).join('')}
           </div>
         </div>
         ${userTemplates.length > 0
