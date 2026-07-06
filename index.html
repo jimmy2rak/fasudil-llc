@@ -9,6 +9,18 @@
   <title>Fasudil-LLC Analyzer — 盐酸法舒地尔缓释制剂分析系统</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="css/app.css?v=2">
+  <!-- Google Material Icons Outlined -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined">
+  <style>
+    .material-icons-outlined {
+      font-size: 18px;
+      vertical-align: middle;
+      line-height: 1;
+    }
+    .nav-item .material-icons-outlined { font-size: 18px; }
+    .header-actions .material-icons-outlined { font-size: 18px; }
+    .btn .material-icons-outlined { font-size: 14px; margin-right: 3px; }
+  </style>
 </head>
 <body>
   <!-- ======== 登录页 ======== -->
@@ -51,13 +63,13 @@
       </div>
       <div class="header-actions">
         <button class="btn btn-icon" onclick="App.exportZip()" title="导出备份">
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 9h12M9 3v12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 6l-3 3-3-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="material-icons-outlined">refresh</span>
         </button>
         <button class="btn btn-icon" onclick="App.showSettings()" title="设置">
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 11.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" stroke="currentColor" stroke-width="1.3"/><path d="M14.95 11.5a1 1 0 00.2 1.1l.04.04a1.21 1.21 0 11-1.71 1.71l-.04-.04a1 1 0 00-1.1-.2 1 1 0 00-.6.92v.12a1.21 1.21 0 11-2.42 0v-.06a1 1 0 00-.66-.94 1 1 0 00-1.1.2l-.04.04a1.21 1.21 0 11-1.71-1.71l.04-.04a1 1 0 00.2-1.1 1 1 0 00-.92-.6h-.12a1.21 1.21 0 110-2.42h.06a1 1 0 00.94-.66 1 1 0 00-.2-1.1l-.04-.04a1.21 1.21 0 111.71-1.71l.04.04a1 1 0 001.1.2h.05a1 1 0 00.6-.92v-.12a1.21 1.21 0 112.42 0v.06a1 1 0 00.66.94 1 1 0 001.1-.2l.04-.04a1.21 1.21 0 111.71 1.71l-.04.04a1 1 0 00-.2 1.1v.05a1 1 0 00.92.6h.12a1.21 1.21 0 110 2.42h-.06a1 1 0 00-.94.66z" stroke="currentColor" stroke-width="1.2"/></svg>
+          <span class="material-icons-outlined">light_mode</span>
         </button>
         <button class="btn btn-icon" onclick="App.logout()" title="退出登录" style="color:var(--color-danger)">
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M7 2.5H4.5A1.5 1.5 0 003 4v10a1.5 1.5 0 001.5 1.5H7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M11 5.5l3.5 3.5L11 12.5M14.5 9H6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="material-icons-outlined">logout</span>
         </button>
       </div>
     </header>
@@ -66,38 +78,44 @@
     <nav class="app-sidebar">
       <ul class="sidebar-nav">
         <li class="nav-item active" data-page="dashboard" onclick="App.navigate('dashboard')">
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M2 9l7-7 7 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 7v7a1 1 0 001 1h2v-4a1 1 0 011-1h2a1 1 0 011 1v4h2a1 1 0 001-1V7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="material-icons-outlined">dashboard</span>
           <span>首页总览</span>
         </li>
         <li class="nav-item" data-page="upload" onclick="App.navigate('upload')">
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="2" y="3" width="14" height="13" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M9 3v8M6 7l3-3 3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="material-icons-outlined">upload_file</span>
           <span>上传分析</span>
         </li>
         <li class="nav-item" data-page="experiments" onclick="App.navigate('experiments')">
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M4 2.5h10a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1v-12a1 1 0 011-1z" stroke="currentColor" stroke-width="1.5"/><path d="M6 6h6M6 9h4M6 12h5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+          <span class="material-icons-outlined">description</span>
           <span>实验记录</span>
         </li>
         <li class="nav-item" data-page="tools" onclick="App.navigate('tools')">
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M8.5 4.5L2.5 12a1.5 1.5 0 102.12 2.12l7.5-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M15.1 8.9a3 3 0 10-4.24-4.24l-1.06 1.06 4.24 4.24 1.06-1.06z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="material-icons-outlined">construction</span>
           <span>小工具</span>
         </li>
         <li class="nav-item" data-page="knowledge" onclick="App.navigate('knowledge')">
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 3.5h5a2 2 0 012 2v8a2 2 0 00-2-2H3v-8z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M14 3.5H9a2 2 0 00-2 2v8a2 2 0 012 2h5a2 2 0 002-2v-8a2 2 0 00-2-2z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+          <span class="material-icons-outlined">menu_book</span>
           <span>知识库</span>
         </li>
         <li class="nav-item" data-page="prescription" onclick="App.navigate('prescription')">
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M5 2v14M13 2v14M3 5h12M3 9h12M3 13h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M5 6a3 3 0 013-3h2a3 3 0 013 3" stroke="currentColor" stroke-width="1.5"/></svg>
+          <span class="material-icons-outlined">science</span>
           <span>处方管理</span>
         </li>
         <li class="nav-item" data-page="sample" onclick="App.navigate('sample')">
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M6 2a2 2 0 00-2 2v11a1 1 0 001 1h8a1 1 0 001-1V4a2 2 0 00-2-2H6z" stroke="currentColor" stroke-width="1.5"/><path d="M6 4h1M11 4h1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M6 8h6M6 11h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+          <span class="material-icons-outlined">vial</span>
           <span>样本管理</span>
         </li>
         <li class="nav-item" data-page="settings" onclick="App.navigate('settings')">
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 11.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" stroke="currentColor" stroke-width="1.3"/><path d="M14.95 11.5a1 1 0 00.2 1.1l.04.04a1.21 1.21 0 11-1.71 1.71l-.04-.04a1 1 0 00-1.1-.2 1 1 0 00-.6.92v.12a1.21 1.21 0 11-2.42 0v-.06a1 1 0 00-.66-.94 1 1 0 00-1.1.2l-.04.04a1.21 1.21 0 11-1.71-1.71l.04-.04a1 1 0 00.2-1.1 1 1 0 00-.92-.6h-.12a1.21 1.21 0 110-2.42h.06a1 1 0 00.94-.66 1 1 0 00-.2-1.1l-.04-.04a1.21 1.21 0 111.71-1.71l.04.04a1 1 0 001.1.2h.05a1 1 0 00.6-.92v-.12a1.21 1.21 0 112.42 0v.06a1 1 0 00.66.94 1 1 0 001.1-.2l.04-.04a1.21 1.21 0 111.71 1.71l-.04.04a1 1 0 00-.2 1.1v.05a1 1 0 00.92.6h.12a1.21 1.21 0 110 2.42h-.06a1 1 0 00-.94.66z" stroke="currentColor" stroke-width="1.2"/></svg>
+          <span class="material-icons-outlined">settings</span>
           <span>设置</span>
         </li>
       </ul>
+      <div class="sidebar-footer">
+        <div class="sidebar-info">
+          <span class="info-label">数据目录</span>
+          <span id="sidebar-dir-name" class="info-value">未连接</span>
+        </div>
+      </div>
     </nav>
 
     <!-- 主内容区 -->

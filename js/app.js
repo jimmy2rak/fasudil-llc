@@ -443,7 +443,7 @@ const App = (() => {
     <div class="card" style="padding:12px 16px;display:flex;align-items:center;gap:12px">
       <span style="font-size:13px;color:var(--color-text-secondary);white-space:nowrap">上传文件</span>
       <label class="btn btn-primary btn-sm" style="cursor:pointer;white-space:nowrap">
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="vertical-align:middle;margin-right:4px"><path d="M7 1v10M4 5l3-3 3 3M1 11v1.5c0 .3.2.5.5.5h11a.5.5 0 00.5-.5V11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="material-icons-outlined" style="font-size:14px;vertical-align:middle;margin-right:4px">upload_file</span>
         选择文件
         <input type="file" id="upload-hidden-input" style="display:none" multiple accept="*" onchange="App.upload.handleFiles(this.files)">
       </label>
@@ -489,7 +489,7 @@ const App = (() => {
     let html = `<div class="page-header">
       <div><div class="page-title">实验记录</div><div class="page-subtitle">${experiments.length} 个实验组</div></div>
       <button class="btn btn-primary" onclick="ExperimentCards.showCreateDialog()">
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="vertical-align:middle;margin-right:3px"><path d="M7 1v12M1 7h12" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+        <span class="material-icons-outlined" style="font-size:14px;vertical-align:middle;margin-right:3px;color:white">add</span>
         创建实验组
       </button>
     </div>`;
@@ -556,7 +556,7 @@ const App = (() => {
             </div>
             <div class="experiment-card-actions" onclick="event.stopPropagation()">
               <button class="btn btn-sm btn-primary" onclick="App.viewExperimentCards('${exp.id}')" style="background:var(--color-primary)">
-                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-right:2px"><rect x="2.5" y="1.5" width="11" height="13" rx="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 4.5h11M6 1.5v3M10 1.5v3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+                <span class="material-icons-outlined" style="font-size:13px;vertical-align:middle;margin-right:2px">open_in_new</span>
                 查看详情
               </button>
               <button class="btn btn-sm btn-danger" onclick="event.stopPropagation();App.deleteExperimentGroup('${exp.id}')">删除</button>
@@ -661,7 +661,7 @@ const App = (() => {
     }
 
     const body = `<div style="display:flex;flex-direction:column;gap:12px">
-      <div style="padding:8px 12px;background:var(--color-info-bg);border-radius:8px;font-size:13px">📁 ${fileName}${sheetPreview}</div>
+      <div style="padding:8px 12px;background:var(--color-info-bg);border-radius:8px;font-size:13px"><span class="material-icons-outlined" style="font-size:14px;margin-right:4px">folder</span> ${fileName}${sheetPreview}</div>
       <div class="form-group"><label class="form-label">目标实验组 *</label>
         <select class="form-select" id="save-exp-select" onchange="App.onSaveExpSelectChange()" style="font-size:13px">
           <option value="">-- 选择实验组 --</option>
@@ -908,12 +908,12 @@ const App = (() => {
   /** 小工具页面（原计算表移入此处，作为卡片内容） */
   function renderToolsPage(container) {
     const calculators = [
-      { id: 'ee', name: '包封率 EE%', icon: '◆' },
-      { id: 'dl', name: '载药量 DL%', icon: '●' },
-      { id: 'cumulative', name: '累积释放校正', icon: '▲' },
-      { id: 'models', name: '释放动力学拟合', icon: '☆' },
-      { id: 'f2', name: 'f2 相似因子', icon: '■' },
-      { id: 'residual', name: '释放残留率', icon: '▼' }
+      { id: 'ee', name: '包封率 EE%', icon: 'percent' },
+      { id: 'dl', name: '载药量 DL%', icon: 'monitor_weight' },
+      { id: 'cumulative', name: '累积释放校正', icon: 'timeline' },
+      { id: 'models', name: '释放动力学拟合', icon: 'auto_graph' },
+      { id: 'f2', name: 'f2 相似因子', icon: 'compare_arrows' },
+      { id: 'residual', name: '释放残留率', icon: 'pending' }
     ];
 
     // 拦截导航，点击计算器时高亮「小工具」
@@ -926,7 +926,7 @@ const App = (() => {
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px">';
     for (const calc of calculators) {
       html += `<button class="btn btn-secondary" style="padding:16px;text-align:center" onclick="App.showToolCalculator('${calc.id}')">
-        <div style="font-size:20px;margin-bottom:4px">${calc.icon}</div>
+        <div style="font-size:22px;margin-bottom:4px"><span class="material-icons-outlined" style="font-size:22px">${calc.icon}</span></div>
         <div>${calc.name}</div>
       </button>`;
     }
@@ -2004,7 +2004,7 @@ const App = (() => {
 
     // API 配置部分
     html += `<div class="card" style="margin-bottom:20px">
-      <div class="card-title">🤖 AI API 配置</div>
+      <div class="card-title"><span class="material-icons-outlined" style="font-size:16px;margin-right:4px">smart_toy</span> AI API 配置</div>
       <p style="color:var(--color-text-secondary);margin-bottom:16px">配置 AI API 用于智能数据分析。支持 MiniCPM、DeepSeek 等格式。</p>`;
 
     // API 列表
@@ -2044,7 +2044,7 @@ const App = (() => {
 
     html += `<div class="card" style="margin-bottom:20px">
       <div class="card-title" style="display:flex;align-items:center;gap:8px">
-        <span>📋 实验表格模板管理</span>
+        <span><span class="material-icons-outlined" style="font-size:16px;margin-right:4px">clipboard</span> 实验表格模板管理</span>
         <span class="tag tag-info">内置标准 + ${userTemplates.length} 套自定义</span>
       </div>
       <p style="color:var(--color-text-secondary);margin-bottom:16px">系统内置标准模板为只读基准模板；可创建自定义模板扩展列结构与计算规则。新建实验时自动加载首选模板。</p>
@@ -2092,7 +2092,7 @@ const App = (() => {
 
     // 分析 Skill 管理部分
     html += `<div class="card" style="margin-bottom:20px">
-      <div class="card-title">🔧 分析 Skill 管理</div>
+      <div class="card-title"><span class="material-icons-outlined" style="font-size:16px;margin-right:4px">build</span> 分析 Skill 管理</div>
       <p style="color:var(--color-text-secondary);margin-bottom:16px">管理已安装的分析 Skill，用于智能识别数据类型并分析。</p>`;
 
     // 这里可以显示已安装的 skill
@@ -2471,7 +2471,7 @@ const App = (() => {
           ${colsHtml}
         </div>
         <div style="margin-top:12px;padding:12px;background:var(--color-bg-tertiary);border-radius:8px">
-          <div style="font-weight:500;margin-bottom:8px;font-size:13px">🤖 AI 辅助</div>
+          <div style="font-weight:500;margin-bottom:8px;font-size:13px"><span class="material-icons-outlined" style="font-size:16px;margin-right:4px">smart_toy</span> AI 辅助</div>
           <button class="btn btn-sm btn-secondary" onclick="App._showAIGenerateFormulaDialog('${data.id}')">AI生成公式</button>
           <span style="font-size:12px;color:var(--color-text-tertiary);margin-left:8px">
             根据文字描述自动生成计算列公式
@@ -2661,7 +2661,7 @@ const App = (() => {
           <label class="form-label">方式B：上传文档/图片（后续版本支持）</label>
           <div style="padding:20px;border:2px dashed var(--color-border);border-radius:8px;text-align:center;
                 color:var(--color-text-tertiary);font-size:13px">
-            📄 文件上传功能开发中
+            <span class="material-icons-outlined" style="font-size:16px;vertical-align:middle;margin-right:4px">description</span> 文件上传功能开发中
           </div>
         </div>
         <div id="ai-formula-result" style="display:none;margin-top:12px;padding:12px;
@@ -2674,7 +2674,7 @@ const App = (() => {
           </div>
         </div>
         <button class="btn btn-primary" id="ai-generate-btn" onclick="App._callAIGenerateFormula()"
-                style="margin-top:12px;width:100%">🤖 生成公式</button>
+                style="margin-top:12px;width:100%"><span class="material-icons-outlined" style="font-size:14px;vertical-align:middle;margin-right:4px">smart_toy</span> 生成公式</button>
       </div>
     `;
     const footer = `<button class="btn btn-secondary" onclick="App._showFormulaVariableHints()">变量参考</button><button class="btn btn-secondary" onclick="UI.hideModal()">关闭</button>`;
@@ -2744,7 +2744,7 @@ const App = (() => {
         formula = 'drugConc*takeVolume/1000';
       } else {
         UI.toast('AI 服务不可用，请稍后重试', 'warning');
-        btn.disabled = false; btn.textContent = '🤖 生成公式';
+        btn.disabled = false; btn.innerHTML = '<span class="material-icons-outlined" style="font-size:14px;vertical-align:middle;margin-right:4px">smart_toy</span> 生成公式';
         return;
       }
       document.getElementById('ai-formula-output').textContent = formula;
@@ -2752,7 +2752,7 @@ const App = (() => {
       UI.toast('已通过规则匹配生成公式', 'info');
     }
 
-    btn.disabled = false; btn.textContent = '🤖 生成公式';
+    btn.disabled = false; btn.innerHTML = '<span class="material-icons-outlined" style="font-size:14px;vertical-align:middle;margin-right:4px">smart_toy</span> 生成公式';
   }
 
   /** 将 AI 生成的公式应用到编辑器 */
