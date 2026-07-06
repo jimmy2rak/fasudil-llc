@@ -447,6 +447,7 @@ body {
 
 .nav-item {
   display: flex !important;
+  flex-direction: row !important;
   align-items: center !important;
   gap: 8px !important;
   padding: 10px 12px;
@@ -458,6 +459,7 @@ body {
   margin-bottom: 2px;
   text-align: left !important;
   justify-content: flex-start !important;
+  width: 100% !important;
 }
 
 .nav-item:hover {
@@ -473,8 +475,9 @@ body {
 
 .nav-item .material-icons-outlined {
   flex-shrink: 0 !important;
-  line-height: 1 !important;
   width: 24px !important;
+  line-height: 24px !important;
+  font-size: 24px !important;
   text-align: center;
 }
 
@@ -1456,4 +1459,33 @@ body {
   .app-sidebar { display: none; }
   .app-content { margin-left: 0; }
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ===== 全局强制：侧边导航左对齐 + 图标字体兜底（放最底部，优先级最高） ===== */
+.material-icons-outlined {
+  font-family: 'Material Icons Outlined' !important;
+  visibility: hidden;
+}
+.fonts-loaded .material-icons-outlined { visibility: visible; }
+
+.nav-item {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  text-align: left !important;
+  gap: 8px !important;
+  width: 100% !important;
+}
+.nav-item .material-icons-outlined {
+  flex-shrink: 0 !important;
+  width: 24px !important;
+  line-height: 24px !important;
+  font-size: 24px !important;
+  text-align: center;
+}
+.nav-item > span:not(.material-icons-outlined) {
+  text-align: left !important;
+  white-space: nowrap;
+  flex: 1;
 }
