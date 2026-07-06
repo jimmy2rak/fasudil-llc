@@ -17,6 +17,66 @@ const App = (() => {
   const _pageCacheValid = {};      // 标记页面缓存是否有效
   const PAGE_LIST = ['dashboard', 'upload', 'experiments', 'tools', 'knowledge', 'prescription', 'sample', 'settings'];
 
+  // ============================================================
+  // 设置数据缓存（内存 + localStorage）
+  // 根因：原 _renderSettingsInto 每次打开设置都串行 await 3 个 Cloud Function
+  // 接口（getSettings / getAllTemplates / getUserDefaultTemplateId），
+  // 叠加 EdgeOne 云函数冷启动 = 打开设置 10 秒白屏。
+  // 现改为：同步读缓存即时渲染，后台静默刷新。
+  // ============================================================
+  const SETTINGS_CACHE_KEY = 'FasudilLLC_SettingsCache';
+  let _settingsCache = null; // { settings, templates, defaultId }
+
+  function _loadSettingsCacheFromStorage() {
+    if (_settingsCache) return _settingsCache;
+    try {
+      const raw = localStorage.getItem(SETTINGS_CACHE_KEY);
+      if (raw) _settingsCache = JSON.parse(raw);
+    } catch (e) { /* ignore */ }
+    return _settingsCache;
+  }
+
+  function _saveSettingsCacheToStorage() {
+    try {
+      if (_settingsCache) localStorage.setItem(SETTINGS_CACHE_KEY, JSON.stringify(_settingsCache));
+    } catch (e) { /* ignore */ }
+  }
+
+  /** 同步读取设置缓存（无网络，瞬时返回，用于首屏 / 设置即时渲染） */
+  function getCachedSettings() {
+    const c = _loadSettingsCacheFromStorage();
+    if (c) return c;
+    return {
+      settings: { apiConfigs: [], activeApi: null, theme: 'light' },
+      templates: null,
+      defaultId: 'system_default'
+    };
+  }
+
+  /** 后台拉取最新设置数据并写缓存；若设置页正显示则静默重渲染（不阻塞任何交互） */
+  async function refreshSettingsCache() {
+    try {
+      const [settings, tplData, defaultId] = await Promise.all([
+        FSManager.getSettings(),
+        ExperimentData.getAllTemplates(),
+        ExperimentData.getUserDefaultTemplateId()
+      ]);
+      _settingsCache = {
+        settings: settings || { apiConfigs: [], activeApi: null, theme: 'light' },
+        templates: tplData,
+        defaultId: defaultId || 'system_default'
+      };
+      _saveSettingsCacheToStorage();
+      if (currentPage === 'settings' && _pageCacheValid['settings']) {
+        _invalidatePage('settings');
+        await _renderPageInto('settings');
+        _showPage('settings');
+      }
+    } catch (e) {
+      console.warn('[Cache] 后台刷新设置缓存失败（保留本地缓存）:', e.message);
+    }
+  }
+
   /** 初始化所有页面容器（一次性创建 DOM 节点） */
   function _initPageContainers() {
     const content = document.getElementById('app-content');
@@ -96,14 +156,17 @@ const App = (() => {
     }
   }
 
-  /** 设置页面的内部渲染（将 showSettings 拆分为纯渲染函数） */
+  /** 设置页面的内部渲染（将 showSettings 拆分为纯渲染函数）
+      关键修复：直接读取内存/本地缓存的设置数据（同步、瞬时），
+      不再 await 3 个 Cloud Function 接口（getSettings / getAllTemplates /
+      getUserDefaultTemplateId），彻底消除"打开设置 10 秒白屏"。
+      本地无模板缓存时先用默认值即时渲染，并后台 refreshSettingsCache() 拉取最新。 */
   async function _renderSettingsInto(container) {
-    let settings = { apiConfigs: [], activeApi: null, theme: 'light' };
-    try {
-      const result = await FSManager.getSettings();
-      if (result) settings = { ...settings, ...result };
-    } catch (e) {
-      console.warn('读取设置失败，使用默认值', e);
+    const cache = getCachedSettings();
+    const settings = cache.settings || { apiConfigs: [], activeApi: null, theme: 'light' };
+    // 本地无模板缓存（首次）→ 后台拉取后静默重渲染，不阻塞本次显示
+    if (!cache.templates) {
+      refreshSettingsCache();
     }
 
     let html = `<div class="page-header">
@@ -137,11 +200,14 @@ const App = (() => {
     html += `<button class="btn btn-primary" onclick="App.showAddApiDialog()">+ 添加 API</button>`;
     html += `</div>`;
 
-    // 模板管理
-    const tplData = await ExperimentData.getAllTemplates();
-    const userTemplates = tplData.userTemplates;
+    // 模板管理（直接读缓存，无接口等待）
+    const tplData = cache.templates || {
+      builtin: (ExperimentData.SYSTEM_DEFAULT_TEMPLATE || { name: '系统内置标准模板', columns: [], description: '' }),
+      userTemplates: []
+    };
+    const userTemplates = tplData.userTemplates || [];
     const builtinTpl = tplData.builtin;
-    const userDefaultId = await ExperimentData.getUserDefaultTemplateId();
+    const userDefaultId = cache.defaultId || 'system_default';
 
     html += `<div class="card" style="margin-bottom:20px">
       <div class="card-title" style="display:flex;align-items:center;gap:8px">
@@ -309,7 +375,7 @@ const App = (() => {
     // 恢复主题
     _initTheme();
 
-    // 第一步：检查 localStorage 是否有已登录标记（快速路径）
+    // 第一步：检查 localStorage 是否有已登录标记（快速路径，同步、瞬时）
     const localUser = (() => {
       try { return JSON.parse(localStorage.getItem('auth_user')); } catch { return null; }
     })();
@@ -321,7 +387,7 @@ const App = (() => {
       return;
     }
 
-    // 第二步：有本地标记 → 立即显示主应用骨架（侧边栏+顶栏），不等接口
+    // 第二步：有本地标记 → 立即显示主应用骨架（侧边栏+顶栏）
     const loginScreen = document.getElementById('login-screen');
     const appMain = document.getElementById('app-main');
     if (loginScreen) loginScreen.style.display = 'none';
@@ -330,47 +396,63 @@ const App = (() => {
     // 初始化页面缓存容器
     _initPageContainers();
 
-    // 第三步：并行发起所有异步请求（鉴权 + 模板预加载 + 规则加载 + 页面预渲染）
-    try {
-      const [authRes] = await Promise.all([
-        fetch('/api/auth/me', {
-          credentials: 'same-origin',
-          headers: {
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache'
-          }
-        }),
-        // 模板预加载（后台静默执行，不阻塞）
-        (ExperimentCards.preloadTemplateCache ? ExperimentCards.preloadTemplateCache() : Promise.resolve()),
-        // 规则加载（静默失败）
-        ML.loadRules().catch(e => console.warn('加载规则失败:', e.message))
-      ]);
+    // 第三步：乐观渲染首屏 —— 实验数据存于 localStorage（ExperimentData，同步瞬时），
+    // 直接渲染首页，不再等待 /api/auth/me 云函数往返。首屏 < 100ms 可见。
+    currentPage = 'dashboard';
+    await navigate('dashboard');
+    initialized = true;
+    console.log('[Fasudil-LLC] 首屏已乐观渲染，启动后台会话校验与缓存预热');
 
-      if (authRes && authRes.ok) {
-        // 鉴权通过 → 渲染首页
-        console.log('[Fasudil-LLC] 鉴权通过，进入主应用');
-        // 后台预渲染所有页面
-        _prerenderAllPages();
-        // 显示首页
-        await navigate('dashboard');
-        initialized = true;
-        console.log('[Fasudil-LLC] 应用初始化成功');
-      } else {
-        // token 过期或无效 → 清除后显示登录页
+    // 第四步：后台并行 —— 鉴权校验 + 预热缓存 + 分片预渲染其余页面（全部不阻塞首屏）
+    bootstrapSession();
+  }
+
+  /** 后台会话校验与缓存预热（不阻塞首屏渲染）
+      仅用于校验凭证有效性：失败才跳登录页；成功则静默预热模板/规则/设置缓存 */
+  function bootstrapSession() {
+    fetch('/api/auth/me', {
+      credentials: 'same-origin',
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache'
+      }
+    }).then(async (authRes) => {
+      if (!authRes || !authRes.ok) {
+        // token 过期或无效 → 清除凭证后跳登录页（此时首屏已短暂显示，可接受）
         console.warn('[Fasudil-LLC] 鉴权失败，清除凭证');
         try { localStorage.removeItem('auth_user'); } catch {}
-        initialized = false;
-        if (loginScreen) loginScreen.style.display = 'flex';
-        if (appMain) appMain.style.display = 'none';
-        safeShowLoginScreen();
+        forceLogout();
+        return;
       }
-    } catch (err) {
-      console.error('[Fasudil-LLC] 登录检查失败:', err.message);
-      try { localStorage.removeItem('auth_user'); } catch {}
-      if (loginScreen) loginScreen.style.display = 'flex';
-      if (appMain) appMain.style.display = 'none';
-      safeShowLoginScreen();
+      // 鉴权通过：后台静默预热（均不阻塞 UI）
+      if (ExperimentCards.preloadTemplateCache) {
+        ExperimentCards.preloadTemplateCache().catch(e => console.warn('预热模板缓存失败:', e.message));
+      }
+      ML.loadRules().catch(e => console.warn('加载规则失败:', e.message));
+      refreshSettingsCache();   // 设置页打开时直接命中缓存，杜绝 10s 白屏
+      _prerenderRest();         // 分片预渲染其余页面
+      console.log('[Fasudil-LLC] 后台会话校验通过，缓存已预热');
+    }).catch((err) => {
+      // 网络/接口异常：保留本地乐观渲染的应用，不阻断使用（离线可用）
+      console.error('[Fasudil-LLC] 登录检查失败（离线模式保留本地数据）:', err.message);
+    });
+  }
+
+  /** 后台分片预渲染除 dashboard 外的页面，避免一次性同步大量 DOM 操作阻塞主线程 */
+  function _prerenderRest() {
+    const rest = ['upload', 'experiments', 'tools', 'prescription', 'sample', 'knowledge', 'settings'];
+    let i = 0;
+    function step() {
+      if (i >= rest.length) return;
+      const page = rest[i++];
+      if (!_pageCacheValid[page]) {
+        _renderPageInto(page).catch(() => {});
+      }
+      // 每帧渲染一页，让出主线程
+      const raf = window.requestAnimationFrame || ((cb) => setTimeout(cb, 16));
+      raf(step);
     }
+    step();
   }
 
   /**
@@ -2226,9 +2308,10 @@ const App = (() => {
   // --- 设置页 ---
   /** 设置页面入口 — 使用缓存系统，点击瞬间打开 */
   async function showSettings() {
-    // 数据可能已变更，使缓存失效并重新渲染
-    _invalidatePage('settings');
-    await navigate('settings');
+    // 设置数据已在内存/本地缓存（bootstrapSession 后台预热 + 本地兜底），
+    // 直接切换显示，不重复请求 3 个 Cloud Function 接口、不销毁重建 DOM，
+    // 彻底消除"打开设置 10 秒白屏"。仅在数据变更处（addApi/deleteApi 等）调用 _refreshPage 局部刷新。
+    return navigate('settings');
   }
 
   // --- 显示添加 API 对话框 ---

@@ -8,14 +8,22 @@
   <meta http-equiv="Expires" content="0">
   <title>Fasudil-LLC Analyzer — 盐酸法舒地尔缓释制剂分析系统</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="css/app.css?v=5">
-  <!-- 谷歌字体：最高优先级预连接 + 预加载，不与业务接口抢占网络 -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="preload" href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined" as="style">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined">
+  <link rel="stylesheet" href="css/app.css?v=6">
   <style>
-    /* 图标统一 Material Icons Outlined（保持 material-icons-outlined 类名不变） */
+    /* ============================================================
+       自托管 Material Icons Outlined（本地 fonts/ 目录）
+       根因：此前图标字体来自 fonts.googleapis.com / fonts.gstatic.com，
+       国内网络常慢/被限速，导致刷新后 10 秒才加载完、期间显示原始
+       ligature 文本（dashboard/vial 等）乱码。改为本地 woff2 +
+       font-display:block，配合 EdgeOne 长效缓存，刷新后瞬时渲染图标。
+       ============================================================ */
+    @font-face {
+      font-family: 'Material Icons Outlined';
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url('fonts/material-icons-outlined.woff2?v=1') format('woff2');
+    }
     .material-icons-outlined {
       font-family: 'Material Icons Outlined' !important;
       font-weight: normal;
@@ -35,9 +43,6 @@
     }
     .header-actions .material-icons-outlined { font-size: 18px; }
     .btn .material-icons-outlined { font-size: 14px; margin-right: 3px; }
-    /* 字体未加载完成前隐藏原始关键字文本，杜绝乱码溢出；加载后由脚本加 .fonts-loaded 显示 */
-    .material-icons-outlined { visibility: hidden; }
-    .fonts-loaded .material-icons-outlined { visibility: visible; }
     /* ===== 侧边导航全局强制左对齐（优先级最高，无例外） ===== */
     .nav-item {
       display: flex !important;
@@ -61,18 +66,6 @@
       flex: 1;
     }
   </style>
-  <script>
-    /* 字体加载完成后显示图标，消除乱码文字阶段；兜底3秒强制显示 */
-    (function () {
-      function showIcons() { document.documentElement.classList.add('fonts-loaded'); }
-      if (document.fonts && document.fonts.ready) {
-        document.fonts.ready.then(showIcons);
-      } else {
-        window.addEventListener('load', showIcons);
-      }
-      setTimeout(showIcons, 3000);
-    })();
-  </script>
 </head>
 <body>
   <!-- ======== 登录页 ======== -->
@@ -186,22 +179,28 @@
   <!-- Toast 容器 -->
   <div id="toast-container" class="toast-container"></div>
 
-  <!-- 第三方库 -->
-  <script src="libs/xlsx.full.min.js?v=2"></script>
-  <script src="libs/chart.umd.js?v=2"></script>
-  <script src="libs/pdf.min.js?v=2"></script>
-  <script>if(typeof pdfjsLib !== 'undefined') pdfjsLib.GlobalWorkerOptions.workerSrc = 'libs/pdf.worker.min.js?v=2';</script>
-  <script src="libs/mammoth.min.js?v=2"></script>
+  <!-- 第三方库（defer：下载与 HTML 解析并行，不阻塞首屏渲染） -->
+  <script defer src="libs/xlsx.full.min.js?v=3"></script>
+  <script defer src="libs/chart.umd.js?v=3"></script>
+  <script defer src="libs/pdf.min.js?v=3"></script>
+  <script defer src="libs/mammoth.min.js?v=3"></script>
 
-  <!-- 应用 JS（按依赖顺序） -->
-  <script src="js/fs-manager.js?v=2"></script>
-  <script src="js/parser.js?v=2"></script>
-  <script src="js/ui.js?v=2"></script>
-  <script src="js/charts.js?v=2"></script>
-  <script src="js/calc.js?v=2"></script>
-  <script src="js/ml.js?v=2"></script>
-  <script src="js/experiment-cards-data.js?v=2"></script>
-  <script src="js/experiment-cards.js?v=2"></script>
-  <script src="js/app.js?v=3"></script>
+  <!-- 应用 JS（按依赖顺序，defer 保证并行下载、按序执行，且在 DOMContentLoaded 前完成） -->
+  <script defer src="js/fs-manager.js?v=3"></script>
+  <script defer src="js/parser.js?v=3"></script>
+  <script defer src="js/ui.js?v=3"></script>
+  <script defer src="js/charts.js?v=3"></script>
+  <script defer src="js/calc.js?v=3"></script>
+  <script defer src="js/ml.js?v=3"></script>
+  <script defer src="js/experiment-cards-data.js?v=3"></script>
+  <script defer src="js/experiment-cards.js?v=3"></script>
+  <script defer src="js/app.js?v=4"></script>
+  <script>
+    /* pdf.js worker 需在 pdf.min.js（defer）执行后设置；defer 脚本在 DOMContentLoaded
+       前已按序执行完毕，故置于 DOMContentLoaded 中赋值，确保 pdfjsLib 已就绪 */
+    window.addEventListener('DOMContentLoaded', function () {
+      if (typeof pdfjsLib !== 'undefined') pdfjsLib.GlobalWorkerOptions.workerSrc = 'libs/pdf.worker.min.js?v=3';
+    });
+  </script>
 </body>
 </html>

@@ -1,4 +1,32 @@
+# ============================================================
+# EdgeOne Pages 缓存策略
+# 根因：此前 /* 统一 no-store/no-cache，导致每次刷新都重新下载
+# 全部资源（含 149KB app.js、libs、字体），叠加串行同步脚本，
+# 形成刷新 10 秒白屏。现改为：HTML 短缓存、静态资源长效缓存。
+#
+# 顺序约定：通配规则 /* 写在最前，具体资源目录写在后面。
+# 无论是"后者覆盖"还是"最具体路径优先"的匹配策略，结果都正确：
+#   - /js/* /css/* /libs/* /fonts/* 命中后置具体规则 → immutable 长缓存
+#   - 其余（HTML 文档）仅命中 /* → no-cache，保证新部署即时生效
+# ============================================================
+
 /*
-  Cache-Control: no-store, no-cache, must-revalidate, proxy-revalidate
+  Cache-Control: no-cache
   Pragma: no-cache
   Expires: 0
+
+# 应用 JS —— immutable 长缓存，版本号(?v=)变更即视为新资源
+/js/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# 样式表
+/css/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# 第三方库（xlsx / chart / pdf / mammoth）
+/libs/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# 自托管字体（Material Icons Outlined woff2）
+/fonts/*
+  Cache-Control: public, max-age=31536000, immutable
