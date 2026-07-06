@@ -1230,34 +1230,39 @@ const App = (() => {
   // --- 计算表页 ---
   /** 小工具页面（原计算表移入此处，作为卡片内容） */
   function renderToolsPage(container) {
-    const calculators = [
-      { id: 'ee', name: '包封率 EE%', icon: 'percent' },
-      { id: 'dl', name: '载药量 DL%', icon: 'monitor_weight' },
-      { id: 'cumulative', name: '累积释放校正', icon: 'timeline' },
-      { id: 'models', name: '释放动力学拟合', icon: 'auto_graph' },
-      { id: 'f2', name: 'f2 相似因子', icon: 'compare_arrows' },
-      { id: 'residual', name: '释放残留率', icon: 'pending' }
-    ];
+    try {
+      const calculators = [
+        { id: 'ee', name: '包封率 EE%', icon: 'percent' },
+        { id: 'dl', name: '载药量 DL%', icon: 'monitor_weight' },
+        { id: 'cumulative', name: '累积释放校正', icon: 'timeline' },
+        { id: 'models', name: '释放动力学拟合', icon: 'auto_graph' },
+        { id: 'f2', name: 'f2 相似因子', icon: 'compare_arrows' },
+        { id: 'residual', name: '释放残留率', icon: 'pending' }
+      ];
 
-    // 拦截导航，点击计算器时高亮「小工具」
-    let html = `<div class="page-header">
-      <div><div class="page-title">小工具</div><div class="page-subtitle">辅助实验数据分析工具集合</div></div>
-    </div>`;
+      // 拦截导航，点击计算器时高亮「小工具」
+      let html = `<div class="page-header">
+        <div><div class="page-title">小工具</div><div class="page-subtitle">辅助实验数据分析工具集合</div></div>
+      </div>`;
 
-    html += '<div class="card"><div class="card-title">计算工具合集</div>';
-    html += '<p style="font-size:13px;color:var(--color-text-secondary);margin-bottom:16px">选择计算类型，输入数据，自动输出计算结果</p>';
-    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px">';
-    for (const calc of calculators) {
-      html += `<button class="btn btn-secondary" style="padding:16px;text-align:center" onclick="App.showToolCalculator('${calc.id}')">
-        <div style="font-size:22px;margin-bottom:4px"><span class="material-icons-outlined" style="font-size:22px">${calc.icon}</span></div>
-        <div>${calc.name}</div>
-      </button>`;
+      html += '<div class="card"><div class="card-title">计算工具合集</div>';
+      html += '<p style="font-size:13px;color:var(--color-text-secondary);margin-bottom:16px">选择计算类型，输入数据，自动输出计算结果</p>';
+      html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px">';
+      for (const calc of calculators) {
+        html += `<button class="btn btn-secondary" style="padding:16px;text-align:center" onclick="App.showToolCalculator('${calc.id}')">
+          <div style="font-size:22px;margin-bottom:4px"><span class="material-icons-outlined" style="font-size:22px">${calc.icon}</span></div>
+          <div>${calc.name}</div>
+        </button>`;
+      }
+      html += '</div></div>';
+
+      html += '<div id="calc-workspace" style="margin-top:24px"></div>';
+
+      if (container) container.innerHTML = html;
+    } catch (e) {
+      console.error('[Tools] 渲染失败:', e.message);
+      if (container) container.innerHTML = '<div class="empty-state"><p>小工具加载异常</p></div>';
     }
-    html += '</div></div>';
-
-    html += '<div id="calc-workspace" style="margin-top:24px"></div>';
-
-    container.innerHTML = html;
   }
 
   // --- 知识库页 ---
