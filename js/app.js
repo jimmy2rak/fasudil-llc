@@ -408,6 +408,13 @@ const App = (() => {
     bootstrapSession();
   }
 
+  /** 安全附加 catch：仅当值为 Promise（含 .catch）时才调用，避免对 undefined 调 .catch 抛错 */
+  function _safeCatch(promise, label) {
+    if (promise && typeof promise.catch === 'function') {
+      promise.catch(e => console.warn(`[Fasudil-LLC] ${label}:`, (e && e.message) || e));
+    }
+  }
+
   /** 后台会话校验与缓存预热（不阻塞首屏渲染）
       仅用于校验凭证有效性：失败才跳登录页；成功则静默预热模板/规则/设置缓存 */
   function bootstrapSession() {
@@ -426,16 +433,23 @@ const App = (() => {
         return;
       }
       // 鉴权通过：后台静默预热（均不阻塞 UI）
-      if (ExperimentCards.preloadTemplateCache) {
-        ExperimentCards.preloadTemplateCache().catch(e => console.warn('预热模板缓存失败:', e.message));
+      try {
+        if (ExperimentCards && typeof ExperimentCards.preloadTemplateCache === 'function') {
+          _safeCatch(ExperimentCards.preloadTemplateCache(), '预热模板缓存失败');
+        }
+        if (ML && typeof ML.loadRules === 'function') {
+          _safeCatch(ML.loadRules(), '加载规则失败');
+        }
+        _safeCatch(refreshSettingsCache(), '刷新设置缓存失败');
+        _prerenderRest();         // 分片预渲染其余页面
+        console.log('[Fasudil-LLC] 后台会话校验通过，缓存已预热');
+      } catch (e) {
+        // 预热阶段任何异常都不应阻断首屏（首屏已渲染完成）
+        console.warn('[Fasudil-LLC] 后台预热部分失败（不影响使用）:', e.message);
       }
-      ML.loadRules().catch(e => console.warn('加载规则失败:', e.message));
-      refreshSettingsCache();   // 设置页打开时直接命中缓存，杜绝 10s 白屏
-      _prerenderRest();         // 分片预渲染其余页面
-      console.log('[Fasudil-LLC] 后台会话校验通过，缓存已预热');
     }).catch((err) => {
       // 网络/接口异常：保留本地乐观渲染的应用，不阻断使用（离线可用）
-      console.error('[Fasudil-LLC] 登录检查失败（离线模式保留本地数据）:', err.message);
+      console.warn('[Fasudil-LLC] 登录检查失败（离线模式保留本地数据）:', (err && err.message) || err);
     });
   }
 
