@@ -651,7 +651,7 @@ const ExperimentCards = (() => {
             const cbHtml = samplesCheckboxHtml || _generateSamplesCheckboxHtml(formData);
             html += `<td style="min-width:150px;white-space:nowrap">${cbHtml}</td>`;
           } else {
-            html += `<td><input class="cf-input cf-name" data-field="${col.id}" value="${txtVal}" placeholder="${col.default||''}"></td>`;
+            html += `<td><input class="cf-input cf-name" data-field="${col.id}" name="cf_${col.id}" value="${txtVal}" placeholder="${col.default||''}"></td>`;
           }
           break;
         case 'number':
@@ -672,7 +672,7 @@ const ExperimentCards = (() => {
               numVal = formData._rowData[col.id];
             }
           }
-          html += `<td><input class="cf-input" data-field="${col.id}" type="number" step="any"
+          html += `<td><input class="cf-input" data-field="${col.id}" name="cf_${col.id}" type="number" step="any"
             value="${numVal.toFixed(2)}" placeholder="${(col.default||0).toFixed(2)}"
             onwheel="return false" oninput="ExperimentCards.onCellChange()"></td>`;
           break;
@@ -697,13 +697,13 @@ const ExperimentCards = (() => {
             ? (formData.perRowDrugConcFormula || col.defaultFormula || '公式待配置')
             : (col.defaultFormula || '公式待配置');
           html += `<td><div class="cf-conc-mode">
-            <select class="cf-mode-select" data-field="${col.id}-mode"
+            <select class="cf-mode-select" data-field="${col.id}-mode" name="cf_${col.id}_mode"
               onchange="ExperimentCards.onConcModeChange(this)">
               ${(col.modes||[]).map(m =>
                 `<option value="${m.id}" ${m.id===concMode?'selected':''}>${m.label}</option>`
               ).join('')}
             </select>
-            <input class="cf-input cf-conc-value" data-field="${col.id}" type="number" step="any"
+            <input class="cf-input cf-conc-value" data-field="${col.id}" name="cf_${col.id}" type="number" step="any"
               value="${concVal.toFixed(2)}" onwheel="return false"
               oninput="ExperimentCards.onCellChange()"
               style="${concMode==='formula'?'display:none':''}">

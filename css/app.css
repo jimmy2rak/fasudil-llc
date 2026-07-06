@@ -446,9 +446,9 @@ body {
 }
 
 .nav-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
   padding: 10px 12px;
   border-radius: var(--radius-md);
   cursor: pointer;
@@ -456,6 +456,8 @@ body {
   font-size: 14px;
   transition: all 0.15s;
   margin-bottom: 2px;
+  text-align: left !important;
+  justify-content: flex-start !important;
 }
 
 .nav-item:hover {
@@ -469,7 +471,18 @@ body {
   font-weight: 500;
 }
 
-.nav-item svg { flex-shrink: 0; }
+.nav-item .material-icons-outlined {
+  flex-shrink: 0 !important;
+  line-height: 1 !important;
+  width: 24px !important;
+  text-align: center;
+}
+
+.nav-item > span:not(.material-icons-outlined) {
+  text-align: left !important;
+  flex: 1;
+  white-space: nowrap;
+}
 
 .sidebar-footer {
   margin-top: 24px;

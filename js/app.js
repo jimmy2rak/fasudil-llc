@@ -11,6 +11,233 @@ const App = (() => {
   let _lastUploadFileName = '';
 
   // ============================================================
+  // DOM 预渲染缓存系统
+  // ============================================================
+  const _pageCache = {};          // 存储已渲染的页面 DOM 元素
+  const _pageCacheValid = {};      // 标记页面缓存是否有效
+  const PAGE_LIST = ['dashboard', 'upload', 'experiments', 'tools', 'knowledge', 'prescription', 'sample', 'settings'];
+
+  /** 初始化所有页面容器（一次性创建 DOM 节点） */
+  function _initPageContainers() {
+    const content = document.getElementById('app-content');
+    if (!content) return;
+    content.innerHTML = PAGE_LIST.map(p =>
+      `<div id="page-${p}" class="page-content" style="display:none"></div>`
+    ).join('');
+  }
+
+  /** 预渲染所有页面（init 后后台执行） */
+  function _prerenderAllPages() {
+    _initPageContainers();
+    // 同步页面先渲染
+    _renderPageInto('dashboard');
+    _renderPageInto('upload');
+    _renderPageInto('experiments');
+    _renderPageInto('tools');
+    _renderPageInto('prescription');
+    _renderPageInto('sample');
+    // 异步页面后台渲染
+    _renderPageInto('knowledge');
+    _renderPageInto('settings');
+  }
+
+  /** 将单个页面渲染到对应的缓存容器中 */
+  async function _renderPageInto(page) {
+    const container = document.getElementById(`page-${page}`);
+    if (!container) return;
+    try {
+      switch (page) {
+        case 'dashboard': renderDashboard(container); break;
+        case 'upload': renderUploadPage(container); break;
+        case 'experiments': renderExperimentsPage(container); break;
+        case 'tools': renderToolsPage(container); break;
+        case 'knowledge': await renderKnowledgePage(container); break;
+        case 'prescription': renderPrescriptionPage(container); break;
+        case 'sample': renderSamplePage(container); break;
+        case 'settings': await _renderSettingsInto(container); break;
+      }
+      _pageCacheValid[page] = true;
+    } catch (e) {
+      console.warn(`[Cache] 预渲染页面 ${page} 失败:`, e.message);
+      container.innerHTML = `<div class="empty-state"><p>页面加载失败，请刷新重试</p></div>`;
+    }
+  }
+
+  /** 使指定页面缓存失效（数据变更后调用） */
+  function _invalidatePage(page) {
+    _pageCacheValid[page] = false;
+  }
+
+  /** 使所有页面缓存失效 */
+  function _invalidateAllPages() {
+    PAGE_LIST.forEach(p => _pageCacheValid[p] = false);
+  }
+
+  /** 刷新指定页面（重新渲染） */
+  async function _refreshPage(page) {
+    _invalidatePage(page);
+    await _renderPageInto(page);
+    if (currentPage === page) {
+      _showPage(page);
+    }
+  }
+
+  /** 切换显示的页面（仅切换 display，不重建 DOM） */
+  function _showPage(page) {
+    // 隐藏所有页面
+    PAGE_LIST.forEach(p => {
+      const div = document.getElementById(`page-${p}`);
+      if (div) div.style.display = 'none';
+    });
+    // 显示目标页面
+    const target = document.getElementById(`page-${page}`);
+    if (target) {
+      target.style.display = 'block';
+    }
+  }
+
+  /** 设置页面的内部渲染（将 showSettings 拆分为纯渲染函数） */
+  async function _renderSettingsInto(container) {
+    let settings = { apiConfigs: [], activeApi: null, theme: 'light' };
+    try {
+      const result = await FSManager.getSettings();
+      if (result) settings = { ...settings, ...result };
+    } catch (e) {
+      console.warn('读取设置失败，使用默认值', e);
+    }
+
+    let html = `<div class="page-header">
+      <div><div class="page-title">设置</div><div class="page-subtitle">配置 API、管理 Skill、自定义系统行为</div></div>
+    </div>`;
+
+    html += `<div class="card" style="margin-bottom:20px">
+      <div class="card-title"><span class="material-icons-outlined" style="font-size:16px;margin-right:4px">smart_toy</span> AI API 配置</div>
+      <p style="color:var(--color-text-secondary);margin-bottom:16px">配置 AI API 用于智能数据分析。支持 MiniCPM、DeepSeek 等格式。</p>`;
+
+    if (settings.apiConfigs && settings.apiConfigs.length > 0) {
+      html += `<div style="margin-bottom:16px">
+        <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:8px">已配置的 API:</div>`;
+      for (const [index, api] of settings.apiConfigs.entries()) {
+        const isActive = settings.activeApi === api.id;
+        html += `<div style="display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--color-border-light);border-radius:8px;margin-bottom:8px">
+          <div style="flex:1">
+            <div style="font-weight:500">${api.name}</div>
+            <div style="font-size:12px;color:var(--color-text-tertiary)">${api.provider} · ${api.model}</div>
+          </div>
+          ${isActive ? '<span class="tag tag-success">当前使用</span>' : ''}
+          <button class="btn btn-sm btn-secondary" onclick="App.setActiveApi(${index})">${isActive ? '使用中' : '使用此 API'}</button>
+          <button class="btn btn-sm btn-danger" onclick="App.deleteApi(${index})">删除</button>
+        </div>`;
+      }
+      html += `</div>`;
+    } else {
+      html += `<div class="alert-card alert-info" style="margin-bottom:16px">暂无 API 配置，请添加新的 API。</div>`;
+    }
+
+    html += `<button class="btn btn-primary" onclick="App.showAddApiDialog()">+ 添加 API</button>`;
+    html += `</div>`;
+
+    // 模板管理
+    const tplData = await ExperimentData.getAllTemplates();
+    const userTemplates = tplData.userTemplates;
+    const builtinTpl = tplData.builtin;
+    const userDefaultId = await ExperimentData.getUserDefaultTemplateId();
+
+    html += `<div class="card" style="margin-bottom:20px">
+      <div class="card-title" style="display:flex;align-items:center;gap:8px">
+        <span><span class="material-icons-outlined" style="font-size:16px;margin-right:4px">construction</span> 实验表格模板管理</span>
+        <span class="tag tag-info">内置标准 + ${userTemplates.length} 套自定义</span>
+      </div>
+      <p style="color:var(--color-text-secondary);margin-bottom:16px">系统内置标准模板为只读基准模板；可创建自定义模板扩展列结构与计算规则。新建实验时自动加载首选模板。</p>
+      <div id="template-list-container">
+        <div class="template-card" style="border:1px solid var(--color-border-light);border-radius:8px;padding:12px;margin-bottom:8px;background:var(--color-bg-tertiary);opacity:0.9">
+          <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:8px">
+            <div>
+              <strong>${builtinTpl.name}</strong>
+              <span class="tag tag-default" style="margin-left:6px;font-size:10px;background:#8c94a6;color:#fff">内置·不可编辑</span>
+              ${userDefaultId === 'system_default' ? '<span class="tag tag-primary" style="margin-left:6px">首选</span>' : ''}
+              <span style="font-size:12px;color:var(--color-text-tertiary);margin-left:8px">${builtinTpl.columns.length} 列 · ${builtinTpl.description||''}</span>
+            </div>
+            <div style="display:flex;gap:4px">
+              <button class="btn btn-sm btn-secondary" onclick="App._previewBuiltinTemplate()">预览</button>
+              <button class="btn btn-sm btn-secondary" onclick="App._setDefaultTemplate('system_default')" style="${userDefaultId === 'system_default' ? 'opacity:0.5' : ''}">设为首选</button>
+            </div>
+          </div>
+          <div style="font-size:12px;color:var(--color-text-tertiary);overflow-x:auto;white-space:nowrap">
+            ${builtinTpl.columns.map(c => `<span style="display:inline-block;padding:2px 6px;margin-right:4px;border:1px solid var(--color-border);border-radius:4px;background:var(--color-bg-primary)">${c.label}${c.unit ? '('+c.unit+')' : ''}${c.type === 'computed' ? ' ⚡' : ''}</span>`).join('')}
+          </div>
+        </div>
+        ${userTemplates.length > 0
+          ? userTemplates.map(tpl => _renderTemplateCard(tpl, userDefaultId)).join('')
+          : '<div class="alert-card alert-info" style="margin-top:12px">暂无自定义模板。点击下方按钮创建第一个模板。</div>'
+        }
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-primary" onclick="App.showCreateTemplateDialog()">+ 新建模板</button>
+        <button class="btn btn-secondary" onclick="App._resetDefaultTemplates()" title="清空全部自定义模板，仅保留系统内置标准模板">恢复到默认</button>
+      </div>
+    </div>`;
+
+    html += `<div class="card" style="margin-bottom:20px">
+      <div class="card-title"><span class="material-icons-outlined" style="font-size:16px;margin-right:4px">build</span> 分析 Skill 管理</div>
+      <p style="color:var(--color-text-secondary);margin-bottom:16px">管理已安装的分析 Skill，用于智能识别数据类型并分析。</p>
+      <div style="padding:12px;border:1px solid var(--color-border-light);border-radius:8px;margin-bottom:16px">
+        <div style="font-weight:500">默认分析 Skill</div>
+        <div style="font-size:12px;color:var(--color-text-tertiary);margin-top:4px">自动识别释放度数据、处方组成、残留率数据、LLC 表征图片等</div>
+        <div style="margin-top:8px"><span class="tag tag-success">已启用</span></div>
+      </div>
+      <button class="btn btn-secondary" onclick="UI.toast('Skill 管理功能将在后续版本完善', 'info')">添加自定义 Skill</button>
+    </div>`;
+
+    html += `<div class="card">
+      <div class="card-title">其他设置</div>
+      <div class="form-group">
+        <label class="form-label" for="settings-data-dir">项目数据目录</label>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="text" class="form-input" id="settings-data-dir" name="settings_data_dir" value="${FSManager.getDirName()}" disabled>
+          <button class="btn btn-secondary btn-sm" onclick="App.changeDirectory()">更改</button>
+        </div>
+      </div>
+    </div>`;
+
+    container.innerHTML = html;
+  }
+
+  // ============================================================
+  // 主题切换 & 页面刷新
+  // ============================================================
+
+  /** 明暗主题切换 */
+  function toggleTheme() {
+    const body = document.body;
+    const isDark = body.classList.toggle('dark-theme');
+    try { localStorage.setItem('app_theme', isDark ? 'dark' : 'light'); } catch(e) {}
+    // 更新图标
+    const btn = event && event.currentTarget;
+    if (btn) {
+      const icon = btn.querySelector('.material-icons-outlined');
+      if (icon) icon.textContent = isDark ? 'dark_mode' : 'light_mode';
+    }
+    UI.toast(isDark ? '已切换到暗色主题' : '已切换到亮色主题', 'info');
+  }
+
+  /** 初始化时恢复主题 */
+  function _initTheme() {
+    try {
+      const theme = localStorage.getItem('app_theme');
+      if (theme === 'dark') {
+        document.body.classList.add('dark-theme');
+      }
+    } catch(e) {}
+  }
+
+  /** 刷新当前页面 */
+  function refreshPage() {
+    _refreshPage(currentPage);
+    UI.toast('页面已刷新', 'info');
+  }
+
+  // ============================================================
   // 全局 API 请求封装（自动处理 401 登出）
   // ============================================================
 
@@ -79,6 +306,9 @@ const App = (() => {
   async function init() {
     console.log('[Fasudil-LLC] App.init()');
 
+    // 恢复主题
+    _initTheme();
+
     // 第一步：检查 localStorage 是否有已登录标记（快速路径）
     const localUser = (() => {
       try { return JSON.parse(localStorage.getItem('auth_user')); } catch { return null; }
@@ -97,7 +327,10 @@ const App = (() => {
     if (loginScreen) loginScreen.style.display = 'none';
     if (appMain) appMain.style.display = 'block';
 
-    // 第三步：并行发起所有异步请求（鉴权 + 模板预加载 + 规则加载）
+    // 初始化页面缓存容器
+    _initPageContainers();
+
+    // 第三步：并行发起所有异步请求（鉴权 + 模板预加载 + 规则加载 + 页面预渲染）
     try {
       const [authRes] = await Promise.all([
         fetch('/api/auth/me', {
@@ -116,6 +349,9 @@ const App = (() => {
       if (authRes && authRes.ok) {
         // 鉴权通过 → 渲染首页
         console.log('[Fasudil-LLC] 鉴权通过，进入主应用');
+        // 后台预渲染所有页面
+        _prerenderAllPages();
+        // 显示首页
         await navigate('dashboard');
         initialized = true;
         console.log('[Fasudil-LLC] 应用初始化成功');
@@ -325,7 +561,7 @@ const App = (() => {
   }
 
   // --- 路由 ---
-  function navigate(page) {
+  async function navigate(page) {
     currentPage = page;
 
     // 更新侧边栏选中状态
@@ -333,22 +569,21 @@ const App = (() => {
       item.classList.toggle('active', item.dataset.page === page);
     });
 
-    // 渲染页面内容
-    const content = document.getElementById('app-content');
-    if (!content) return;
-    content.innerHTML = '';
-
-    switch (page) {
-      case 'dashboard': renderDashboard(content); break;
-      case 'upload': renderUploadPage(content); break;
-      case 'experiments': renderExperimentsPage(content); break;
-      case 'calculations': // 旧路由兼容重定向
-      case 'tools': renderToolsPage(content); break;
-      case 'knowledge': renderKnowledgePage(content); break;
-      case 'prescription': renderPrescriptionPage(content); break;
-      case 'sample': renderSamplePage(content); break;
-      case 'settings': showSettings(); break;
+    // 检查页面缓存容器是否存在
+    let target = document.getElementById(`page-${page}`);
+    if (!target) {
+      // 兼容：缓存容器不存在时重新初始化
+      _initPageContainers();
+      target = document.getElementById(`page-${page}`);
     }
+
+    // 如果页面缓存无效或未渲染，重新渲染
+    if (!_pageCacheValid[page]) {
+      await _renderPageInto(page);
+    }
+
+    // 切换显示（仅 display 切换，不重建 DOM）
+    _showPage(page);
 
     return page;
   }
@@ -578,7 +813,12 @@ const App = (() => {
     UI.confirm('确认删除', '此操作将永久删除该实验组及其所有样品和报告，不可恢复。', () => {
       ExperimentData.deleteExperiment(groupId);
       UI.toast('实验组已删除', 'success');
-      renderExperimentsPage(document.getElementById('app-content'));
+      // 刷新相关页面缓存
+      _invalidatePage('experiments');
+      _invalidatePage('dashboard');
+      _invalidatePage('prescription');
+      _invalidatePage('sample');
+      _refreshPage('experiments');
     });
   }
 
@@ -662,26 +902,26 @@ const App = (() => {
 
     const body = `<div style="display:flex;flex-direction:column;gap:12px">
       <div style="padding:8px 12px;background:var(--color-info-bg);border-radius:8px;font-size:13px"><span class="material-icons-outlined" style="font-size:14px;margin-right:4px">folder</span> ${fileName}${sheetPreview}</div>
-      <div class="form-group"><label class="form-label">目标实验组 *</label>
-        <select class="form-select" id="save-exp-select" onchange="App.onSaveExpSelectChange()" style="font-size:13px">
+      <div class="form-group"><label class="form-label" for="save-exp-select">目标实验组 *</label>
+        <select class="form-select" id="save-exp-select" name="save_exp_select" onchange="App.onSaveExpSelectChange()" style="font-size:13px">
           <option value="">-- 选择实验组 --</option>
           <option value="__new__">+ 新建实验组...</option>
           ${expOptions}
         </select>
       </div>
-      <div class="form-group"><label class="form-label">处方名称 *</label>
-        <select class="form-select" id="save-form-name" style="font-size:13px">
+      <div class="form-group"><label class="form-label" for="save-form-name">处方名称 *</label>
+        <select class="form-select" id="save-form-name" name="save_form_name" style="font-size:13px">
           <option value="">-- 请先选择实验组 --</option>
         </select>
       </div>
-      <div class="form-group"><label class="form-label">样品编号 *</label>
-        <select class="form-select" id="save-sample-id" onchange="App.onSaveSampleChange()" style="font-size:13px">
+      <div class="form-group"><label class="form-label" for="save-sample-id">样品编号 *</label>
+        <select class="form-select" id="save-sample-id" name="save_sample_id" onchange="App.onSaveSampleChange()" style="font-size:13px">
           <option value="">-- 请先选择实验组 --</option>
         </select>
       </div>
       <div id="new-sample-wrap" style="display:none" class="form-group">
-        <label class="form-label">新样品编号</label>
-        <input class="form-input" id="new-sample-id-input" placeholder="如 U1、N1" style="font-size:13px">
+        <label class="form-label" for="new-sample-id-input">新样品编号</label>
+        <input class="form-input" id="new-sample-id-input" name="new_sample_id_input" placeholder="如 U1、N1" style="font-size:13px">
       </div>
       ${dataPreview}
     </div>`;
@@ -1038,22 +1278,22 @@ const App = (() => {
   function showCreateExperimentDialog() {
     const body = `
       <div class="form-group">
-        <label class="form-label">实验名称</label>
-        <input type="text" id="new-exp-name" class="form-input" placeholder="例如: 植烷三醇/油酸/水 体系 第1批">
+        <label class="form-label" for="new-exp-name">实验名称</label>
+        <input type="text" id="new-exp-name" name="new_exp_name" class="form-input" placeholder="例如: 植烷三醇/油酸/水 体系 第1批">
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label class="form-label">实验日期</label>
-          <input type="date" id="new-exp-date" class="form-input" value="${new Date().toISOString().split('T')[0]}">
+          <label class="form-label" for="new-exp-date">实验日期</label>
+          <input type="date" id="new-exp-date" name="new_exp_date" class="form-input" value="${new Date().toISOString().split('T')[0]}">
         </div>
         <div class="form-group">
-          <label class="form-label">标签（逗号分隔）</label>
-          <input type="text" id="new-exp-tags" class="form-input" placeholder="例如: LLC,缓释,植烷三醇">
+          <label class="form-label" for="new-exp-tags">标签（逗号分隔）</label>
+          <input type="text" id="new-exp-tags" name="new_exp_tags" class="form-input" placeholder="例如: LLC,缓释,植烷三醇">
         </div>
       </div>
       <div class="form-group">
-        <label class="form-label">备注</label>
-        <textarea id="new-exp-notes" class="form-textarea" rows="3" placeholder="实验方案描述"></textarea>
+        <label class="form-label" for="new-exp-notes">备注</label>
+        <textarea id="new-exp-notes" name="new_exp_notes" class="form-textarea" rows="3" placeholder="实验方案描述"></textarea>
       </div>
     `;
     const footer = `
@@ -1660,12 +1900,12 @@ const App = (() => {
       <p style="color:var(--color-text-secondary);margin-bottom:12px">EE% = (W_total - W_free) / W_total × 100</p>
       <div class="form-row">
         <div class="form-group">
-          <label class="form-label">总药量 W_total (mg)</label>
-          <input type="number" id="ee-total" class="form-input" placeholder="例如: 100">
+          <label class="form-label" for="ee-total">总药量 W_total (mg)</label>
+          <input type="number" id="ee-total" name="ee_total" class="form-input" placeholder="例如: 100">
         </div>
         <div class="form-group">
-          <label class="form-label">游离药量 W_free (mg)</label>
-          <input type="number" id="ee-free" class="form-input" placeholder="例如: 20">
+          <label class="form-label" for="ee-free">游离药量 W_free (mg)</label>
+          <input type="number" id="ee-free" name="ee_free" class="form-input" placeholder="例如: 20">
         </div>
       </div>
       <button class="btn btn-primary" onclick="App.runEE()">计算</button>
@@ -1695,12 +1935,12 @@ const App = (() => {
       <p style="color:var(--color-text-secondary);margin-bottom:12px">DL% = W_encapsulated / W_total_carrier × 100</p>
       <div class="form-row">
         <div class="form-group">
-          <label class="form-label">包封药量 (mg)</label>
-          <input type="number" id="dl-encap" class="form-input" placeholder="例如: 80">
+          <label class="form-label" for="dl-encap">包封药量 (mg)</label>
+          <input type="number" id="dl-encap" name="dl_encap" class="form-input" placeholder="例如: 80">
         </div>
         <div class="form-group">
-          <label class="form-label">制剂总重 (mg)</label>
-          <input type="number" id="dl-total" class="form-input" placeholder="例如: 500">
+          <label class="form-label" for="dl-total">制剂总重 (mg)</label>
+          <input type="number" id="dl-total" name="dl_total" class="form-input" placeholder="例如: 500">
         </div>
       </div>
       <button class="btn btn-primary" onclick="App.runDL()">计算</button>
@@ -1729,21 +1969,21 @@ const App = (() => {
       <p style="color:var(--color-text-secondary);margin-bottom:12px">考虑取样补液的体积校正: Qn = [Cn·V + ΣCi·Vs] / W₀ × 100</p>
       <div class="form-row">
         <div class="form-group">
-          <label class="form-label">溶出介质体积 V (mL)</label>
-          <input type="number" id="cum-v" class="form-input" value="900" placeholder="例如: 900">
+          <label class="form-label" for="cum-v">溶出介质体积 V (mL)</label>
+          <input type="number" id="cum-v" name="cum_v" class="form-input" value="900" placeholder="例如: 900">
         </div>
         <div class="form-group">
-          <label class="form-label">取样体积 Vs (mL)</label>
-          <input type="number" id="cum-vs" class="form-input" value="5" placeholder="例如: 5">
+          <label class="form-label" for="cum-vs">取样体积 Vs (mL)</label>
+          <input type="number" id="cum-vs" name="cum_vs" class="form-input" value="5" placeholder="例如: 5">
         </div>
         <div class="form-group">
-          <label class="form-label">初始药量 W₀ (mg)</label>
-          <input type="number" id="cum-w0" class="form-input" placeholder="例如: 10">
+          <label class="form-label" for="cum-w0">初始药量 W₀ (mg)</label>
+          <input type="number" id="cum-w0" name="cum_w0" class="form-input" placeholder="例如: 10">
         </div>
       </div>
       <div class="form-group">
-        <label class="form-label">各时间点浓度 (μg/mL 或 mg/L，逗号分隔)</label>
-        <input type="text" id="cum-conc" class="form-input" placeholder="例如: 0.5, 1.2, 2.1, 3.0, 4.5">
+        <label class="form-label" for="cum-conc">各时间点浓度 (μg/mL 或 mg/L，逗号分隔)</label>
+        <input type="text" id="cum-conc" name="cum_conc" class="form-input" placeholder="例如: 0.5, 1.2, 2.1, 3.0, 4.5">
       </div>
       <button class="btn btn-primary" onclick="App.runCumulative()">计算</button>
       <div id="cum-result" style="margin-top:16px"></div>
@@ -1772,13 +2012,13 @@ const App = (() => {
     workspace.innerHTML = `<div class="card">
       <div class="card-title">释放动力学模型拟合</div>
       <p style="color:var(--color-text-secondary);margin-bottom:12px">自动拟合零级、一级、Higuchi、Korsmeyer-Peppas、Hixson-Crowell 5种模型</p>
-      <div class="form-group">
-        <label class="form-label">时间点 (h，逗号分隔)</label>
-        <input type="text" id="model-time" class="form-input" placeholder="例如: 0.5, 1, 2, 4, 8, 12, 24">
-      </div>
-      <div class="form-group">
-        <label class="form-label">累积释放率 (%，逗号分隔)</label>
-        <input type="text" id="model-release" class="form-input" placeholder="例如: 8, 15, 25, 42, 58, 72, 85">
+      <div class="form-        <div class="form-group">
+          <label class="form-label" for="model-time">时间点 (h，逗号分隔)</label>
+          <input type="text" id="model-time" name="model_time" class="form-input" placeholder="例如: 0.5, 1, 2, 4, 8, 12, 24">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="model-release">累积释放率 (%，逗号分隔)</label>
+          <input type="text" id="model-release" name="model_release" class="form-input" placeholder="例如: 8, 15, 25, 42, 58, 72, 85">
       </div>
       <button class="btn btn-primary" onclick="App.runModels()">拟合</button>
       <div id="model-result" style="margin-top:16px"></div>
@@ -1831,24 +2071,24 @@ const App = (() => {
       <p style="color:var(--color-text-secondary);margin-bottom:12px">比较两条释放曲线的相似度: f2 ≥ 50 表示相似</p>
       <div class="form-row" style="grid-template-columns:1fr 1fr">
         <div>
-          <div class="form-group">
-            <label class="form-label">参比制剂 时间点 (h)</label>
-            <input type="text" id="f2-ref-time" class="form-input" placeholder="例如: 1, 2, 4, 8, 12">
+          <div class="form-grou            <div class="form-group">
+              <label class="form-label" for="f2-ref-time">参比制剂 时间点 (h)</label>
+              <input type="text" id="f2-ref-time" name="f2_ref_time" class="form-input" placeholder="例如: 1, 2, 4, 8, 12">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="f2-ref-release">参比制剂 释放率 (%)</label>
+              <input type="text" id="f2-ref-release" name="f2_ref_release" class="form-input" placeholder="例如: 15, 25, 42, 58, 72">
+            </div>
           </div>
-          <div class="form-group">
-            <label class="form-label">参比制剂 释放率 (%)</label>
-            <input type="text" id="f2-ref-release" class="form-input" placeholder="例如: 15, 25, 42, 58, 72">
-          </div>
-        </div>
-        <div>
-          <div class="form-group">
-            <label class="form-label">测试制剂 时间点 (h)</label>
-            <input type="text" id="f2-test-time" class="form-input" placeholder="例如: 1, 2, 4, 8, 12">
-          </div>
-          <div class="form-group">
-            <label class="form-label">测试制剂 释放率 (%)</label>
-            <input type="text" id="f2-test-release" class="form-input" placeholder="例如: 12, 22, 40, 55, 70">
-          </div>
+          <div>
+            <div class="form-group">
+              <label class="form-label" for="f2-test-time">测试制剂 时间点 (h)</label>
+              <input type="text" id="f2-test-time" name="f2_test_time" class="form-input" placeholder="例如: 1, 2, 4, 8, 12">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="f2-test-release">测试制剂 释放率 (%)</label>
+              <input type="text" id="f2-test-release" name="f2_test_release" class="form-input" placeholder="例如: 12, 22, 40, 55, 70">
+            </div>
         </div>
       </div>
       <button class="btn btn-primary" onclick="App.runF2()">计算 f2</button>
@@ -1883,12 +2123,12 @@ const App = (() => {
       <p style="color:var(--color-text-secondary);margin-bottom:12px">残留率 = 残余药量 / 初始药量 × 100</p>
       <div class="form-row">
         <div class="form-group">
-          <label class="form-label">初始药量 (mg)</label>
-          <input type="number" id="res-initial" class="form-input" placeholder="例如: 10">
+          <label class="form-label" for="res-initial">初始药量 (mg)</label>
+          <input type="number" id="res-initial" name="res_initial" class="form-input" placeholder="例如: 10">
         </div>
         <div class="form-group">
-          <label class="form-label">残余药量 (mg)</label>
-          <input type="number" id="res-remaining" class="form-input" placeholder="例如: 1.5">
+          <label class="form-label" for="res-remaining">残余药量 (mg)</label>
+          <input type="number" id="res-remaining" name="res_remaining" class="form-input" placeholder="例如: 1.5">
         </div>
       </div>
       <button class="btn btn-primary" onclick="App.runResidual()">计算</button>
@@ -1915,36 +2155,36 @@ const App = (() => {
   function showCreateLiteratureDialog() {
     const body = `
       <div class="form-group">
-        <label class="form-label">标题</label>
-        <input type="text" id="new-lit-title" class="form-input" placeholder="论文标题">
+        <label class="form-label" for="new-lit-title">标题</label>
+        <input type="text" id="new-lit-title" name="new_lit_title" class="form-input" placeholder="论文标题">
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label class="form-label">作者</label>
-          <input type="text" id="new-lit-authors" class="form-input" placeholder="作者列表">
+          <label class="form-label" for="new-lit-authors">作者</label>
+          <input type="text" id="new-lit-authors" name="new_lit_authors" class="form-input" placeholder="作者列表">
         </div>
         <div class="form-group">
-          <label class="form-label">年份</label>
-          <input type="number" id="new-lit-year" class="form-input" placeholder="例如: 2024">
+          <label class="form-label" for="new-lit-year">年份</label>
+          <input type="number" id="new-lit-year" name="new_lit_year" class="form-input" placeholder="例如: 2024">
         </div>
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label class="form-label">期刊</label>
-          <input type="text" id="new-lit-journal" class="form-input" placeholder="期刊名称">
+          <label class="form-label" for="new-lit-journal">期刊</label>
+          <input type="text" id="new-lit-journal" name="new_lit_journal" class="form-input" placeholder="期刊名称">
         </div>
         <div class="form-group">
-          <label class="form-label">DOI</label>
-          <input type="text" id="new-lit-doi" class="form-input" placeholder="DOI">
+          <label class="form-label" for="new-lit-doi">DOI</label>
+          <input type="text" id="new-lit-doi" name="new_lit_doi" class="form-input" placeholder="DOI">
         </div>
       </div>
       <div class="form-group">
-        <label class="form-label">标签（逗号分隔）</label>
-        <input type="text" id="new-lit-tags" class="form-input" placeholder="例如: LLC,缓释,法舒地尔">
+        <label class="form-label" for="new-lit-tags">标签（逗号分隔）</label>
+        <input type="text" id="new-lit-tags" name="new_lit_tags" class="form-input" placeholder="例如: LLC,缓释,法舒地尔">
       </div>
       <div class="form-group">
-        <label class="form-label">笔记</label>
-        <textarea id="new-lit-notes" class="form-textarea" rows="3" placeholder="关键发现、数据摘要"></textarea>
+        <label class="form-label" for="new-lit-notes">笔记</label>
+        <textarea id="new-lit-notes" name="new_lit_notes" class="form-textarea" rows="3" placeholder="关键发现、数据摘要"></textarea>
       </div>
     `;
     const footer = `
@@ -1975,6 +2215,7 @@ const App = (() => {
       await FSManager.createLiterature(litId, data);
       UI.hideModal();
       UI.toast('文献已添加', 'success');
+      _invalidatePage('knowledge');
       await navigate('knowledge');
     } catch (err) {
       UI.toast('添加失败: ' + err.message, 'danger');
@@ -1983,152 +2224,19 @@ const App = (() => {
 
   // --- 设置 ---
   // --- 设置页 ---
+  /** 设置页面入口 — 使用缓存系统，点击瞬间打开 */
   async function showSettings() {
-    const container = document.getElementById('app-content');
-    if (!container) return;
-
-    // 读取当前设置（异步）
-    let settings = { apiConfigs: [], activeApi: null, theme: 'light' };
-    try {
-      const result = await FSManager.getSettings();
-      if (result) {
-        settings = { ...settings, ...result };
-      }
-    } catch (e) {
-      console.warn('读取设置失败，使用默认值', e);
-    }
-
-    let html = `<div class="page-header">
-      <div><div class="page-title">设置</div><div class="page-subtitle">配置 API、管理 Skill、自定义系统行为</div></div>
-    </div>`;
-
-    // API 配置部分
-    html += `<div class="card" style="margin-bottom:20px">
-      <div class="card-title"><span class="material-icons-outlined" style="font-size:16px;margin-right:4px">smart_toy</span> AI API 配置</div>
-      <p style="color:var(--color-text-secondary);margin-bottom:16px">配置 AI API 用于智能数据分析。支持 MiniCPM、DeepSeek 等格式。</p>`;
-
-    // API 列表
-    if (settings.apiConfigs && settings.apiConfigs.length > 0) {
-      html += `<div style="margin-bottom:16px">
-        <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:8px">已配置的 API:</div>`;
-
-      for (const [index, api] of settings.apiConfigs.entries()) {
-        const isActive = settings.activeApi === api.id;
-        html += `<div style="display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--color-border-light);border-radius:8px;margin-bottom:8px">
-          <div style="flex:1">
-            <div style="font-weight:500">${api.name}</div>
-            <div style="font-size:12px;color:var(--color-text-tertiary)">${api.provider} · ${api.model}</div>
-          </div>
-          ${isActive ? '<span class="tag tag-success">当前使用</span>' : ''}
-          <button class="btn btn-sm btn-secondary" onclick="App.setActiveApi(${index})">${isActive ? '✓ 使用中' : '使用此 API'}</button>
-          <button class="btn btn-sm btn-danger" onclick="App.deleteApi(${index})">删除</button>
-        </div>`;
-      }
-
-      html += `</div>`;
-    } else {
-      html += `<div class="alert-card alert-info" style="margin-bottom:16px">暂无 API 配置，请添加新的 API。</div>`;
-    }
-
-    // 添加 API 按钮
-    html += `<button class="btn btn-primary" onclick="App.showAddApiDialog()">+ 添加 API</button>`;
-
-    html += `</div>`;
-
-    // ====== 实验表格模板管理（双架构：内置标准 + 用户自定义） ======
-    const tplData = await ExperimentData.getAllTemplates();
-    const userTemplates = tplData.userTemplates;
-    const builtinTpl = tplData.builtin;
-    const userDefaultId = await ExperimentData.getUserDefaultTemplateId();
-    const totalCount = 1 + userTemplates.length; // 内置 + 用户自定义
-
-    html += `<div class="card" style="margin-bottom:20px">
-      <div class="card-title" style="display:flex;align-items:center;gap:8px">
-        <span><span class="material-icons-outlined" style="font-size:16px;margin-right:4px">clipboard</span> 实验表格模板管理</span>
-        <span class="tag tag-info">内置标准 + ${userTemplates.length} 套自定义</span>
-      </div>
-      <p style="color:var(--color-text-secondary);margin-bottom:16px">系统内置标准模板为只读基准模板；可创建自定义模板扩展列结构与计算规则。新建实验时自动加载首选模板。</p>
-
-      <div id="template-list-container">
-        <!-- 1. 系统内置标准模板卡片（只读） -->
-        <div class="template-card" style="border:1px solid var(--color-border-light);border-radius:8px;padding:12px;margin-bottom:8px;
-              background:var(--color-bg-tertiary);opacity:0.9">
-          <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:8px">
-            <div>
-              <strong>${builtinTpl.name}</strong>
-              <span class="tag tag-default" style="margin-left:6px;font-size:10px;background:#8c94a6;color:#fff">内置·不可编辑</span>
-              ${userDefaultId === 'system_default' ? '<span class="tag tag-primary" style="margin-left:6px">首选</span>' : ''}
-              <span style="font-size:12px;color:var(--color-text-tertiary);margin-left:8px">
-                ${builtinTpl.columns.length} 列 · ${builtinTpl.description||''}
-              </span>
-            </div>
-            <div style="display:flex;gap:4px">
-              <button class="btn btn-sm btn-secondary" onclick="App._previewBuiltinTemplate()">预览</button>
-              <button class="btn btn-sm btn-secondary" onclick="App._setDefaultTemplate('system_default')"
-                      style="${userDefaultId === 'system_default' ? 'opacity:0.5' : ''}">设为首选</button>
-            </div>
-          </div>
-          <div style="font-size:12px;color:var(--color-text-tertiary);overflow-x:auto;white-space:nowrap">
-            ${builtinTpl.columns.map(c => `<span style="display:inline-block;padding:2px 6px;margin-right:4px;
-              border:1px solid var(--color-border);border-radius:4px;background:var(--color-bg-primary)">
-              ${c.label}${c.unit ? '('+c.unit+')' : ''}${c.type === 'computed' ? ' ⚡' : ''}
-            </span>`).join('')}
-          </div>
-        </div>
-
-        <!-- 2. 用户自定义模板列表 -->
-        ${userTemplates.length > 0
-          ? userTemplates.map(tpl => _renderTemplateCard(tpl, userDefaultId)).join('')
-          : '<div class="alert-card alert-info" style="margin-top:12px">暂无自定义模板。点击下方按钮创建第一个模板。</div>'
-        }
-      </div>
-
-      <div style="display:flex;gap:8px;margin-top:12px">
-        <button class="btn btn-primary" onclick="App.showCreateTemplateDialog()">+ 新建模板</button>
-        <button class="btn btn-secondary" onclick="App._resetDefaultTemplates()"
-                title="清空全部自定义模板，仅保留系统内置标准模板">恢复到默认</button>
-      </div>
-    </div>`;
-
-    // 分析 Skill 管理部分
-    html += `<div class="card" style="margin-bottom:20px">
-      <div class="card-title"><span class="material-icons-outlined" style="font-size:16px;margin-right:4px">build</span> 分析 Skill 管理</div>
-      <p style="color:var(--color-text-secondary);margin-bottom:16px">管理已安装的分析 Skill，用于智能识别数据类型并分析。</p>`;
-
-    // 这里可以显示已安装的 skill
-    html += `<div style="padding:12px;border:1px solid var(--color-border-light);border-radius:8px;margin-bottom:16px">
-      <div style="font-weight:500">默认分析 Skill</div>
-      <div style="font-size:12px;color:var(--color-text-tertiary);margin-top:4px">自动识别释放度数据、处方组成、残留率数据、LLC 表征图片等</div>
-      <div style="margin-top:8px">
-        <span class="tag tag-success">已启用</span>
-      </div>
-    </div>`;
-
-    html += `<button class="btn btn-secondary" onclick="UI.toast('Skill 管理功能将在后续版本完善', 'info')">添加自定义 Skill</button>`;
-
-    html += `</div>`;
-
-    // 其他设置
-    html += `<div class="card">
-      <div class="card-title">⚙️ 其他设置</div>
-      <div class="form-group">
-        <label class="form-label">项目数据目录</label>
-        <div style="display:flex;align-items:center;gap:8px">
-          <input type="text" class="form-input" value="${FSManager.getDirName()}" disabled>
-          <button class="btn btn-secondary btn-sm" onclick="App.changeDirectory()">更改</button>
-        </div>
-      </div>
-    </div>`;
-
-    container.innerHTML = html;
+    // 数据可能已变更，使缓存失效并重新渲染
+    _invalidatePage('settings');
+    await navigate('settings');
   }
 
   // --- 显示添加 API 对话框 ---
   function showAddApiDialog() {
     const body = `
       <div class="form-group">
-        <label class="form-label">预设配置（可选，选择后自动填写）</label>
-        <select id="api-preset" class="form-input" onchange="App.applyApiPreset()">
+        <label class="form-label" for="api-preset">预设配置（可选，选择后自动填写）</label>
+        <select id="api-preset" name="api_preset" class="form-input" onchange="App.applyApiPreset()">
           <option value="">-- 手动填写 --</option>
           <option value="minicpm-v46">MiniCPM-V 4.6（免费公测 Key）</option>
           <option value="deepseek">DeepSeek（需填写自己的 Key）</option>
@@ -2137,12 +2245,12 @@ const App = (() => {
       </div>
       <hr style="margin:12px 0;border:none;border-top:1px solid var(--color-border-light)">
       <div class="form-group">
-        <label class="form-label">API 名称</label>
-        <input type="text" id="api-name" class="form-input" placeholder="例如：MiniCPM-V 4.6">
+        <label class="form-label" for="api-name">API 名称</label>
+        <input type="text" id="api-name" name="api_name" class="form-input" placeholder="例如：MiniCPM-V 4.6">
       </div>
       <div class="form-group">
-        <label class="form-label">提供商</label>
-        <select id="api-provider" class="form-input">
+        <label class="form-label" for="api-provider">提供商</label>
+        <select id="api-provider" name="api_provider" class="form-input">
           <option value="minicpm">MiniCPM</option>
           <option value="deepseek">DeepSeek</option>
           <option value="openai">OpenAI 兼容</option>
@@ -2150,17 +2258,17 @@ const App = (() => {
         </select>
       </div>
       <div class="form-group">
-        <label class="form-label">API Base URL</label>
-        <input type="text" id="api-base-url" class="form-input" placeholder="例如：https://api.modelbest.co/v1">
+        <label class="form-label" for="api-base-url">API Base URL</label>
+        <input type="text" id="api-base-url" name="api_base_url" class="form-input" placeholder="例如：https://api.modelbest.co/v1">
       </div>
       <div class="form-group">
-        <label class="form-label">API Key</label>
-        <input type="password" id="api-key" class="form-input" placeholder="输入 API Key">
+        <label class="form-label" for="api-key">API Key</label>
+        <input type="password" id="api-key" name="api_key" class="form-input" placeholder="输入 API Key">
         <p id="api-key-hint" style="font-size:12px;color:var(--color-text-tertiary);margin-top:4px"></p>
       </div>
       <div class="form-group">
-        <label class="form-label">模型名称</label>
-        <input type="text" id="api-model" class="form-input" placeholder="例如：MiniCPM-V-4.6-Instruct">
+        <label class="form-label" for="api-model">模型名称</label>
+        <input type="text" id="api-model" name="api_model" class="form-input" placeholder="例如：MiniCPM-V-4.6-Instruct">
         <p id="api-model-hint" style="font-size:12px;color:var(--color-text-tertiary);margin-top:4px"></p>
       </div>
     `;
@@ -2258,7 +2366,7 @@ const App = (() => {
       UI.toast('API 添加成功', 'success');
 
       // 刷新设置页面
-      showSettings();
+      _refreshPage('settings');
     } catch (err) {
       UI.toast('添加 API 失败: ' + err.message, 'danger');
     }
@@ -2276,7 +2384,7 @@ const App = (() => {
       UI.toast(`已切换到 ${api.name}`, 'success');
 
       // 刷新设置页面
-      showSettings();
+      _refreshPage('settings');
     } catch (err) {
       UI.toast('切换 API 失败: ' + err.message, 'danger');
     }
@@ -2301,7 +2409,7 @@ const App = (() => {
         UI.toast('API 已删除', 'success');
 
         // 刷新设置页面
-        showSettings();
+        _refreshPage('settings');
       });
     } catch (err) {
       UI.toast('删除 API 失败: ' + err.message, 'danger');
@@ -2315,7 +2423,7 @@ const App = (() => {
       if (handle) {
         await FSManager.ensureProjectStructure();
         UI.toast('项目目录已更改', 'success');
-        showSettings();
+        _refreshPage('settings');
       }
     } catch (err) {
       UI.toast('更改目录失败: ' + err.message, 'danger');
@@ -2433,12 +2541,12 @@ const App = (() => {
           <option value="samples" ${col.type==='samples'?'selected':''}>样品复选</option>
           <option value="dynamic" ${col.type==='dynamic'?'selected':''}>动态模式</option>
         </select>
-        <input class="form-input tpl-unit-input" data-edit="unit" value="${col.unit||''}"
-               placeholder="单位" style="width:50px;${col.type==='number'?'':'display:none'}">
-        <input class="form-input tpl-formula-input" data-edit="formula" value="${col.formula||''}"
-               placeholder="公式" style="flex:1;${col.type==='computed'?'':'display:none'}">
-        <input class="form-input tpl-formula-desc-input" data-edit="formulaDescription" value="${col.formulaDescription||''}"
-               placeholder="公式说明(选填)" style="width:120px;${col.type==='computed'?'':'display:none'}">
+          <input class="form-input tpl-unit-input" data-edit="unit" name="tpl_col_${i}_unit" value="${col.unit||''}"
+                 placeholder="单位" style="width:50px;${col.type==='number'?'':'display:none'}">
+          <input class="form-input tpl-formula-input" data-edit="formula" name="tpl_col_${i}_formula" value="${col.formula||''}"
+                 placeholder="公式" style="flex:1;${col.type==='computed'?'':'display:none'}">
+          <input class="form-input tpl-formula-desc-input" data-edit="formulaDescription" name="tpl_col_${i}_formula_desc" value="${col.formulaDescription||''}"
+                 placeholder="公式说明(选填)" style="width:120px;${col.type==='computed'?'':'display:none'}">
         <input class="form-input" data-edit="width" value="${col.width||'80px'}" placeholder="宽度" style="width:65px">
         <button class="btn btn-sm btn-danger" onclick="App._removeTemplateColumn(${i},this)">✕</button>
       </div>
@@ -2449,7 +2557,7 @@ const App = (() => {
         <div style="display:flex;gap:12px;margin-bottom:12px">
           <div style="flex:2">
             <label class="form-label">模板名称 *</label>
-            <input class="form-input" id="tpl-edit-name" value="${data.name}" placeholder="如：标准脂质体处方">
+            <input class="form-input" id="tpl-edit-name" name="tpl_edit_name" value="${data.name}" placeholder="如：标准脂质体处方">
           </div>
           <div style="flex:1">
             <label class="form-label">设为默认</label>
@@ -2461,7 +2569,7 @@ const App = (() => {
         </div>
         <div class="form-group" style="margin-bottom:12px">
           <label class="form-label">模板描述</label>
-          <input class="form-input" id="tpl-edit-desc" value="${data.description||''}" placeholder="选填">
+          <input class="form-input" id="tpl-edit-desc" name="tpl_edit_desc" value="${data.description||''}" placeholder="选填">
         </div>
         <label class="form-label" style="display:flex;justify-content:space-between;align-items:center">
           <span>列配置</span>
@@ -2543,7 +2651,7 @@ const App = (() => {
     UI.hideModal();
     UI.toast(`模板「${name}」已保存`, 'success');
     if (window.ExperimentCards) ExperimentCards.refreshTemplateCache();
-    showSettings();
+    _refreshPage('settings');
   }
 
   /** 复制模板 */
@@ -2561,7 +2669,7 @@ const App = (() => {
     await ExperimentData.saveUserTemplates(templates);
     UI.toast('模板已复制', 'success');
     if (window.ExperimentCards) ExperimentCards.refreshTemplateCache();
-    showSettings();
+    _refreshPage('settings');
   }
 
   /** 设为首选模板 */
@@ -2569,7 +2677,7 @@ const App = (() => {
     await ExperimentData.saveUserDefaultTemplateId(tplId);
     UI.toast('首选模板已更新', 'success');
     if (window.ExperimentCards) ExperimentCards.refreshTemplateCache();
-    showSettings();
+    _refreshPage('settings');
   }
 
   /** 删除模板（仅限自定义模板） */
@@ -2585,7 +2693,7 @@ const App = (() => {
       await ExperimentData.deleteUserTemplate(tplId);
       UI.toast('模板已删除', 'success');
       if (window.ExperimentCards) ExperimentCards.refreshTemplateCache();
-      showSettings();
+      _refreshPage('settings');
     });
   }
 
@@ -2639,7 +2747,7 @@ const App = (() => {
       await ExperimentData.saveUserTemplates([]);
       await ExperimentData.saveUserDefaultTemplateId('system_default');
       UI.toast('已恢复至系统内置标准模板', 'success');
-      showSettings();
+      _refreshPage('settings');
     });
   }
 
@@ -2652,7 +2760,7 @@ const App = (() => {
         </p>
         <div class="form-group" style="margin-bottom:16px">
           <label class="form-label">方式A：文字描述计算逻辑</label>
-          <textarea class="form-input" id="ai-formula-desc" rows="3"
+          <textarea class="form-input" id="ai-formula-desc" name="ai_formula_desc" rows="3"
             placeholder="例如：计算本行总重，等于SPC+GMO+NMP+水+EtOH+DOPG-Na之和"
             style="width:100%;box-sizing:border-box;resize:vertical"></textarea>
         </div>
@@ -3133,6 +3241,8 @@ const App = (() => {
   return {
     logout,
     navigate,
+    toggleTheme,
+    refreshPage,
     showCreateExperimentDialog,
     createExperiment,
     viewExperiment,
