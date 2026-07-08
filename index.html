@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Fasudil-LLC Analyzer V2 — 盐酸法舒地尔缓释制剂分析系统</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="css/app.css?v=1">
+  <!-- 谷歌字体：最高优先级预连接 + 预加载 -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined" as="style">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined">
+  <style>
+    /* 图标统一 Material Icons Outlined */
+    .material-icons-outlined {
+      font-family: 'Material Icons Outlined' !important;
+      font-weight: normal;
+      font-style: normal;
+      font-size: 18px;
+      line-height: 1;
+      letter-spacing: normal;
+      text-transform: none;
+      display: inline-block;
+      white-space: nowrap;
+      word-wrap: normal;
+      direction: ltr;
+      -webkit-font-feature-settings: 'liga';
+      -webkit-font-smoothing: antialiased;
+      font-feature-settings: 'liga';
+      vertical-align: middle;
+    }
+    .header-actions .material-icons-outlined { font-size: 18px; }
+    .btn .material-icons-outlined { font-size: 14px; margin-right: 3px; }
+    /* 字体未加载完成前隐藏，杜绝乱码溢出 */
+    .material-icons-outlined { visibility: hidden; }
+    .fonts-loaded .material-icons-outlined { visibility: visible; }
+    /* 侧边导航全局强制左对齐 */
+    .nav-item {
+      display: flex !important;
+      flex-direction: row !important;
+      align-items: center !important;
+      justify-content: flex-start !important;
+      text-align: left !important;
+      gap: 8px !important;
+      width: 100% !important;
+    }
+    .nav-item .material-icons-outlined {
+      flex-shrink: 0 !important;
+      width: 24px !important;
+      line-height: 24px !important;
+      font-size: 24px !important;
+      text-align: center;
+    }
+    .nav-item > span:not(.material-icons-outlined) {
+      text-align: left !important;
+      white-space: nowrap;
+      flex: 1;
+    }
+  </style>
+  <script>
+    /* 字体加载完成后显示图标，兜底3秒强制显示 */
+    (function () {
+      function showIcons() { document.documentElement.classList.add('fonts-loaded'); }
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(showIcons);
+      } else {
+        window.addEventListener('load', showIcons);
+      }
+      setTimeout(showIcons, 3000);
+    })();
+  </script>
+</head>
+<body>
+  <!-- ======== 登录页 ======== -->
+  <div id="login-screen" class="login-screen">
+    <div class="login-card">
+      <div class="login-logo">
+        <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+          <circle cx="24" cy="24" r="20" fill="#0d7377" opacity="0.12"/>
+          <path d="M24 8 L24 40 M8 24 L40 24" stroke="#0d7377" stroke-width="2" stroke-linecap="round"/>
+          <circle cx="24" cy="24" r="8" fill="#1e3a5f" opacity="0.2" stroke="#1e3a5f" stroke-width="1"/>
+          <circle cx="24" cy="24" r="3" fill="#0d7377"/>
+        </svg>
+      </div>
+      <h1 class="login-title">Fasudil-LLC Analyzer V2</h1>
+      <p class="login-subtitle">盐酸法舒地尔缓释制剂 · 数据分析系统</p>
+
+      <div id="login-form-container" class="login-form-container">
+        <!-- 由 js/ui.js 的 renderLoginForm() 动态渲染 -->
+      </div>
+
+      <div id="login-status" class="login-status" style="display:none">
+        <div class="spinner"></div>
+        <p id="login-status-msg">正在登录...</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======== 主应用界面 ======== -->
+  <div id="app-main" class="app-main" style="display:none">
+    <!-- 顶部栏 -->
+    <header class="app-header">
+      <div class="header-brand">
+        <svg width="20" height="20" viewBox="0 0 48 48" fill="none">
+          <circle cx="24" cy="24" r="3" fill="#0d7377"/>
+        </svg>
+        <span class="header-title">Fasudil-LLC Analyzer V2</span>
+      </div>
+      <div class="header-search">
+        <input type="text" id="global-search" name="global_search" placeholder="搜索实验、文献、计算..." class="search-input">
+      </div>
+      <div class="header-actions">
+        <button class="btn btn-icon" onclick="App.refreshPage()" title="刷新页面">
+          <span class="material-icons-outlined">refresh</span>
+        </button>
+        <button class="btn btn-icon" onclick="App.toggleTheme()" title="明暗切换">
+          <span class="material-icons-outlined">light_mode</span>
+        </button>
+        <button class="btn btn-icon" onclick="App.logout()" title="退出登录" style="color:var(--color-danger)">
+          <span class="material-icons-outlined">logout</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- 侧边栏 -->
+    <nav class="app-sidebar">
+      <ul class="sidebar-nav">
+        <li class="nav-item active" data-page="dashboard" onclick="App.navigate('dashboard')">
+          <span class="material-icons-outlined">dashboard</span>
+          <span>首页总览</span>
+        </li>
+        <li class="nav-item" data-page="upload" onclick="App.navigate('upload')">
+          <span class="material-icons-outlined">upload_file</span>
+          <span>上传分析</span>
+        </li>
+        <li class="nav-item" data-page="experiments" onclick="App.navigate('experiments')">
+          <span class="material-icons-outlined">description</span>
+          <span>实验记录</span>
+        </li>
+        <li class="nav-item" data-page="tools" onclick="App.navigate('tools')">
+          <span class="material-icons-outlined">construction</span>
+          <span>小工具</span>
+        </li>
+        <li class="nav-item" data-page="knowledge" onclick="App.navigate('knowledge')">
+          <span class="material-icons-outlined">menu_book</span>
+          <span>知识库</span>
+        </li>
+        <li class="nav-item" data-page="prescription" onclick="App.navigate('prescription')">
+          <span class="material-icons-outlined">science</span>
+          <span>处方管理</span>
+        </li>
+        <li class="nav-item" data-page="sample" onclick="App.navigate('sample')">
+          <span class="material-icons-outlined">vial</span>
+          <span>样本管理</span>
+        </li>
+        <li class="nav-item" data-page="settings" onclick="App.navigate('settings')">
+          <span class="material-icons-outlined">settings</span>
+          <span>设置</span>
+        </li>
+      </ul>
+      <div class="sidebar-footer">
+        <div class="sidebar-info">
+          <span class="info-label">登录账号</span>
+          <span id="sidebar-user-email" class="info-value">—</span>
+        </div>
+      </div>
+    </nav>
+
+    <!-- 主内容区 -->
+    <main id="app-content" class="app-content">
+      <!-- 页面内容由 JS 动态渲染 -->
+    </main>
+  </div>
+
+  <!-- 模态框容器 -->
+  <div id="modal-overlay" class="modal-overlay hidden">
+    <div id="modal-container" class="modal-container">
+      <!-- 模态框内容由 JS 动态渲染 -->
+    </div>
+  </div>
+
+  <!-- Toast 容器 -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- 第三方库 -->
+  <script src="libs/xlsx.full.min.js?v=1"></script>
+  <script src="libs/chart.umd.js?v=1"></script>
+  <script src="libs/pdf.min.js?v=1"></script>
+  <script>if(typeof pdfjsLib !== 'undefined') pdfjsLib.GlobalWorkerOptions.workerSrc = 'libs/pdf.worker.min.js?v=1';</script>
+  <script src="libs/mammoth.min.js?v=1"></script>
+
+  <!-- 应用 JS（按依赖顺序） -->
+  <script src="js/parser.js?v=1"></script>
+  <script src="js/ui.js?v=1"></script>
+  <script src="js/charts.js?v=1"></script>
+  <script src="js/calc.js?v=1"></script>
+  <script src="js/ml.js?v=1"></script>
+  <script src="js/experiment-cards-data.js?v=1"></script>
+  <script src="js/experiment-cards.js?v=1"></script>
+  <script src="js/app.js?v=1"></script>
+</body>
+</html>
