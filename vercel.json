@@ -1,7 +1,8 @@
 {
   "version": 2,
-  "buildCommand": null,
+  "buildCommand": "echo 'static site with serverless functions'",
   "outputDirectory": ".",
+  "cleanUrls": true,
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/(.*)", "destination": "/index.html" }
